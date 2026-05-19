@@ -3,15 +3,18 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
+  Award,
   Camera,
   CheckCircle2,
   ChevronRight,
   Flame,
   Home as HomeIcon,
   Loader2,
+  Mic2,
   RefreshCw,
   Shield,
   Sparkles,
+  Sword,
   Target,
   Trophy,
   Zap,
@@ -25,9 +28,24 @@ const TFJS_SRC = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.m
 const POSE_SRC =
   'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js';
 
-const ROUND_SECONDS = 30;
+const ROUND_LENGTH_OPTIONS = [30, 60, 90];
+const DEFAULT_ROUND_SECONDS = 60;
 const WARNING_THROTTLE_FRAMES = 15;
 const KEYPOINT_CONFIDENCE = 0.3;
+
+const COMBO_STEP_WINDOW_MS = 1400;
+const COMBO_REST_MS = 900;
+const POINTS_PER_HIT = 10;
+const COMBO_MULTIPLIER_CAP = 5;
+
+const LS_KEY = 'mac.stats.v1';
+const STATS_DEFAULTS = {
+  totalRounds: 0,
+  bestScore: 0,
+  bestStreak: 0,
+  lastRoundDate: null,
+  streakDays: 0,
+};
 
 const SKELETON_PAIRS = [
   ['left_shoulder', 'right_shoulder'],
@@ -42,6 +60,28 @@ const SKELETON_PAIRS = [
   ['left_knee', 'left_ankle'],
   ['right_hip', 'right_knee'],
   ['right_knee', 'right_ankle'],
+];
+
+const lead = (name) => ({ hand: 'lead', name });
+const rear = (name) => ({ hand: 'rear', name });
+
+const COMBO_LIBRARY = [
+  { id: '1-2', label: '1-2', steps: [lead('Jab'), rear('Cross')] },
+  { id: '1-1', label: '1-1', steps: [lead('Jab'), lead('Jab')] },
+  { id: '2-3', label: '2-3', steps: [rear('Cross'), lead('Lead Hook')] },
+  { id: '1-1-2', label: '1-1-2', steps: [lead('Jab'), lead('Jab'), rear('Cross')] },
+  { id: '1-2-3', label: '1-2-3', steps: [lead('Jab'), rear('Cross'), lead('Lead Hook')] },
+  { id: '1-2-4', label: '1-2-4', steps: [lead('Jab'), rear('Cross'), rear('Rear Hook')] },
+  {
+    id: '1-2-1-2',
+    label: '1-2-1-2',
+    steps: [lead('Jab'), rear('Cross'), lead('Jab'), rear('Cross')],
+  },
+  {
+    id: '1-2-3-2',
+    label: '1-2-3-2',
+    steps: [lead('Jab'), rear('Cross'), lead('Lead Hook'), rear('Cross')],
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -93,6 +133,126 @@ async function loadPoseLibraries() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Audio + haptics helpers                                            */
+/* ------------------------------------------------------------------ */
+
+let _audioCtx = null;
+function getAudioCtx() {
+  if (typeof window === 'undefined') return null;
+  if (_audioCtx) return _audioCtx;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    _audioCtx = new Ctor();
+  } catch (_e) {
+    return null;
+  }
+  return _audioCtx;
+}
+
+function playBell(freq = 880, durationMs = 200, type = 'sine') {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  try {
+    if (ctx.state === 'suspended') ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      ctx.currentTime + durationMs / 1000,
+    );
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + durationMs / 1000 + 0.02);
+  } catch (_e) {
+    /* noop */
+  }
+}
+
+function speak(text, opts = {}) {
+  if (typeof window === 'undefined') return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  try {
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = opts.rate ?? 1.15;
+    u.pitch = opts.pitch ?? 1.0;
+    u.volume = opts.volume ?? 1.0;
+    synth.speak(u);
+  } catch (_e) {
+    /* noop */
+  }
+}
+
+function stopSpeech() {
+  try {
+    window.speechSynthesis?.cancel();
+  } catch (_e) {
+    /* noop */
+  }
+}
+
+function vibrate(pattern) {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch (_e) {
+    /* noop */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Persistent stats                                                   */
+/* ------------------------------------------------------------------ */
+
+function loadStats() {
+  if (typeof window === 'undefined') return { ...STATS_DEFAULTS };
+  try {
+    const raw = window.localStorage.getItem(LS_KEY);
+    if (!raw) return { ...STATS_DEFAULTS };
+    return { ...STATS_DEFAULTS, ...JSON.parse(raw) };
+  } catch (_e) {
+    return { ...STATS_DEFAULTS };
+  }
+}
+
+function saveStats(stats) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(LS_KEY, JSON.stringify(stats));
+  } catch (_e) {
+    /* noop */
+  }
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function yesterdayKey() {
+  return new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+}
+
+function nextStats(prev, results) {
+  const today = todayKey();
+  let streakDays = prev.streakDays;
+  if (prev.lastRoundDate !== today) {
+    streakDays = prev.lastRoundDate === yesterdayKey() ? streakDays + 1 : 1;
+  }
+  return {
+    totalRounds: prev.totalRounds + 1,
+    bestScore: Math.max(prev.bestScore, Math.round(results.overallScore)),
+    bestStreak: Math.max(prev.bestStreak, results.bestStreak),
+    lastRoundDate: today,
+    streakDays,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -122,6 +282,15 @@ function scoreRingColor(score) {
   return 'stroke-red-500';
 }
 
+function sideToHand(side, stance) {
+  if (stance === 'southpaw') return side === 'left' ? 'rear' : 'lead';
+  return side === 'left' ? 'lead' : 'rear';
+}
+
+function fmtDayLabel() {
+  return new Date().toLocaleDateString(undefined, { weekday: 'long' });
+}
+
 /* ------------------------------------------------------------------ */
 /* Main App                                                           */
 /* ------------------------------------------------------------------ */
@@ -129,6 +298,8 @@ function scoreRingColor(score) {
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState('home');
   const [results, setResults] = useState(null);
+  const [stance, setStance] = useState('orthodox');
+  const [roundSeconds, setRoundSeconds] = useState(DEFAULT_ROUND_SECONDS);
 
   const goHome = useCallback(() => {
     setResults(null);
@@ -143,12 +314,18 @@ export default function App() {
         )}
         {currentScreen === 'setup' && (
           <SetupScreen
+            stance={stance}
+            setStance={setStance}
+            roundSeconds={roundSeconds}
+            setRoundSeconds={setRoundSeconds}
             onReady={() => setCurrentScreen('recording')}
             onBack={goHome}
           />
         )}
         {currentScreen === 'recording' && (
           <RecordingScreen
+            stance={stance}
+            roundSeconds={roundSeconds}
             onFinish={(data) => {
               setResults(data);
               setCurrentScreen('processing');
@@ -179,14 +356,22 @@ export default function App() {
 /* ------------------------------------------------------------------ */
 
 function HomeScreen({ onStart }) {
+  const [stats, setStats] = useState(STATS_DEFAULTS);
+
+  useEffect(() => {
+    setStats(loadStats());
+  }, []);
+
+  const dayLabel = useMemo(fmtDayLabel, []);
+
   return (
     <div className="flex flex-col h-full min-h-screen px-6 pt-12 pb-8">
       <div className="flex items-center justify-between mb-8">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 font-medium">
-            Tuesday
+            {dayLabel}
           </p>
-          <h1 className="text-2xl font-semibold text-white mt-1">Good Morning</h1>
+          <h1 className="text-2xl font-semibold text-white mt-1">Ready to work</h1>
         </div>
         <div className="h-10 w-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
           <Flame className="w-5 h-5 text-emerald-500" />
@@ -194,13 +379,25 @@ function HomeScreen({ onStart }) {
       </div>
 
       <div className="grid grid-cols-3 gap-3 mb-8">
-        <StatTile label="Streak" value="4d" icon={<Flame className="w-4 h-4" />} />
-        <StatTile label="Rounds" value="12" icon={<Activity className="w-4 h-4" />} />
-        <StatTile label="Avg" value="78" icon={<Trophy className="w-4 h-4" />} />
+        <StatTile
+          label="Streak"
+          value={stats.streakDays > 0 ? `${stats.streakDays}d` : '—'}
+          icon={<Flame className="w-4 h-4" />}
+        />
+        <StatTile
+          label="Rounds"
+          value={stats.totalRounds.toString()}
+          icon={<Activity className="w-4 h-4" />}
+        />
+        <StatTile
+          label="Best"
+          value={stats.bestScore > 0 ? stats.bestScore.toString() : '—'}
+          icon={<Trophy className="w-4 h-4" />}
+        />
       </div>
 
       <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 font-medium mb-3">
-        Today's Plan
+        Today's Session
       </p>
 
       <div className="rounded-3xl bg-gradient-to-br from-emerald-500/10 via-zinc-900 to-zinc-900 border border-zinc-800 p-5 mb-4 relative overflow-hidden">
@@ -209,26 +406,26 @@ function HomeScreen({ onStart }) {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-semibold tracking-wider uppercase">
-                Live
+                Live Coach
               </span>
               <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
-                30s round
+                Voice + Vision
               </span>
             </div>
             <h2 className="text-lg font-semibold text-white leading-snug">
-              AI Live Shadow Round
+              Combo Callout Round
             </h2>
             <p className="text-sm text-zinc-400 mt-1">
-              Boxing · Guard & Stance focus
+              Coach calls combos. You land them. Beat your best.
             </p>
           </div>
           <Sparkles className="w-5 h-5 text-emerald-400" />
         </div>
 
         <div className="mt-5 grid grid-cols-3 gap-2">
-          <MiniMetric icon={<Shield className="w-3.5 h-3.5" />} label="Guard" />
-          <MiniMetric icon={<Target className="w-3.5 h-3.5" />} label="Stance" />
-          <MiniMetric icon={<Zap className="w-3.5 h-3.5" />} label="Punches" />
+          <MiniMetric icon={<Mic2 className="w-3.5 h-3.5" />} label="Voice" />
+          <MiniMetric icon={<Sword className="w-3.5 h-3.5" />} label="Combos" />
+          <MiniMetric icon={<Zap className="w-3.5 h-3.5" />} label="Streaks" />
         </div>
       </div>
 
@@ -237,9 +434,9 @@ function HomeScreen({ onStart }) {
           <Camera className="w-4 h-4 text-zinc-300" />
         </div>
         <div className="flex-1">
-          <p className="text-sm font-medium text-white">Camera-based coach</p>
+          <p className="text-sm font-medium text-white">100% on-device</p>
           <p className="text-xs text-zinc-500">
-            Runs on-device. Nothing leaves your phone.
+            Video never leaves your phone. Turn the volume up.
           </p>
         </div>
       </div>
@@ -249,11 +446,11 @@ function HomeScreen({ onStart }) {
           onClick={onStart}
           className="w-full h-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 transition-colors text-black font-semibold text-base flex items-center justify-center gap-2 shadow-[0_8px_30px_-8px_rgba(16,185,129,0.6)]"
         >
-          Setup Camera
+          Start Live Round
           <ArrowRight className="w-5 h-5" />
         </button>
         <p className="text-center text-[11px] text-zinc-600 mt-3">
-          MoveNet · TensorFlow.js · 100% on-device
+          MoveNet · TensorFlow.js · Web Speech
         </p>
       </div>
     </div>
@@ -266,7 +463,9 @@ function StatTile({ label, value, icon }) {
       <div className="flex items-center justify-between text-zinc-500 mb-1">
         {icon}
       </div>
-      <p className="text-lg font-semibold text-white leading-none">{value}</p>
+      <p className="text-lg font-semibold text-white leading-none tabular-nums">
+        {value}
+      </p>
       <p className="text-[11px] text-zinc-500 mt-1">{label}</p>
     </div>
   );
@@ -285,7 +484,14 @@ function MiniMetric({ icon, label }) {
 /* Screen: SETUP                                                      */
 /* ------------------------------------------------------------------ */
 
-function SetupScreen({ onReady, onBack }) {
+function SetupScreen({
+  stance,
+  setStance,
+  roundSeconds,
+  setRoundSeconds,
+  onReady,
+  onBack,
+}) {
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [error, setError] = useState(null);
   const cancelledRef = useRef(false);
@@ -321,8 +527,8 @@ function SetupScreen({ onReady, onBack }) {
         ← Back
       </button>
 
-      <div className="flex-1 flex flex-col items-center justify-center text-center">
-        <div className="relative h-32 w-32 mb-6">
+      <div className="flex-1 flex flex-col items-center text-center">
+        <div className="relative h-28 w-28 mb-5">
           <div
             className={`absolute inset-0 rounded-full ${
               status === 'ready'
@@ -334,13 +540,13 @@ function SetupScreen({ onReady, onBack }) {
           />
           <div className="absolute inset-0 flex items-center justify-center">
             {status === 'loading' && (
-              <Loader2 className="w-12 h-12 text-emerald-500 animate-spin" />
+              <Loader2 className="w-11 h-11 text-emerald-500 animate-spin" />
             )}
             {status === 'ready' && (
-              <CheckCircle2 className="w-14 h-14 text-emerald-500" />
+              <CheckCircle2 className="w-12 h-12 text-emerald-500" />
             )}
             {status === 'error' && (
-              <AlertTriangle className="w-12 h-12 text-red-500" />
+              <AlertTriangle className="w-11 h-11 text-red-500" />
             )}
           </div>
         </div>
@@ -354,17 +560,62 @@ function SetupScreen({ onReady, onBack }) {
           {status === 'loading' &&
             'Downloading MoveNet pose model. This only happens once per session.'}
           {status === 'ready' &&
-            'Stand 2–3 meters from the camera so your full body is visible.'}
+            'Pick your stance and round length, then frame your full body.'}
           {status === 'error' &&
             (error ||
               'Could not load the AI model. Check your connection and try again.')}
         </p>
 
         {status === 'ready' && (
-          <div className="mt-8 w-full grid grid-cols-1 gap-2 text-left">
-            <SetupTip n="1" text="Place phone vertically, chest height" />
-            <SetupTip n="2" text="Clear space behind you (no other people)" />
-            <SetupTip n="3" text="Good lighting on you, not behind you" />
+          <div className="mt-6 w-full space-y-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-medium mb-2 text-left">
+                Stance
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <SegmentButton
+                  active={stance === 'orthodox'}
+                  onClick={() => setStance('orthodox')}
+                >
+                  Orthodox
+                  <span className="block text-[10px] text-zinc-500 font-normal mt-0.5">
+                    Left hand lead
+                  </span>
+                </SegmentButton>
+                <SegmentButton
+                  active={stance === 'southpaw'}
+                  onClick={() => setStance('southpaw')}
+                >
+                  Southpaw
+                  <span className="block text-[10px] text-zinc-500 font-normal mt-0.5">
+                    Right hand lead
+                  </span>
+                </SegmentButton>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500 font-medium mb-2 text-left">
+                Round length
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {ROUND_LENGTH_OPTIONS.map((s) => (
+                  <SegmentButton
+                    key={s}
+                    active={roundSeconds === s}
+                    onClick={() => setRoundSeconds(s)}
+                  >
+                    {s}s
+                  </SegmentButton>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-1 space-y-2 text-left">
+              <SetupTip n="1" text="Place phone vertically, chest height" />
+              <SetupTip n="2" text="Step back so your full body fits" />
+              <SetupTip n="3" text="Turn the volume up — coach talks" />
+            </div>
           </div>
         )}
       </div>
@@ -398,6 +649,21 @@ function SetupScreen({ onReady, onBack }) {
   );
 }
 
+function SegmentButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`h-12 rounded-xl border text-sm font-semibold transition-colors ${
+        active
+          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+          : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800/70'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function SetupTip({ n, text }) {
   return (
     <div className="flex items-center gap-3 rounded-xl bg-zinc-900/60 border border-zinc-800 px-3 py-2.5">
@@ -413,15 +679,17 @@ function SetupTip({ n, text }) {
 /* Screen: RECORDING                                                  */
 /* ------------------------------------------------------------------ */
 
-function RecordingScreen({ onFinish, onCancel }) {
+function RecordingScreen({ stance, roundSeconds, onFinish, onCancel }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectorRef = useRef(null);
   const rafRef = useRef(null);
   const timerRef = useRef(null);
+  const coachTickRef = useRef(null);
+  const pendingTimeoutsRef = useRef(new Set());
 
-  // Telemetry refs (mutated inside RAF loop, avoid re-renders)
+  // Telemetry refs
   const frameCountRef = useRef(0);
   const handsDroppedFramesRef = useRef(0);
   const narrowStanceFramesRef = useRef(0);
@@ -431,15 +699,149 @@ function RecordingScreen({ onFinish, onCancel }) {
   const lastWarningUpdateRef = useRef(0);
   const finishedRef = useRef(false);
 
-  const [secondsLeft, setSecondsLeft] = useState(ROUND_SECONDS);
-  const [warning, setWarning] = useState(null); // 'guard' | 'stance' | null
+  // Coach refs
+  const scoreRef = useRef(0);
+  const comboStreakRef = useRef(0);
+  const bestStreakRef = useRef(0);
+  const currentComboRef = useRef(null);
+  const comboStepIdxRef = useRef(0);
+  const comboDeadlineRef = useRef(0);
+  const correctHitsRef = useRef(0);
+  const calledStepsRef = useRef(0);
+  const restingRef = useRef(true);
+  const stanceRef = useRef(stance);
+  const roundStartAtRef = useRef(0);
+
+  const [secondsLeft, setSecondsLeft] = useState(roundSeconds);
+  const [warning, setWarning] = useState(null);
   const [livePunches, setLivePunches] = useState(0);
+  const [liveScore, setLiveScore] = useState(0);
+  const [liveStreak, setLiveStreak] = useState(0);
+  const [liveCombo, setLiveCombo] = useState(null); // { steps, currentIdx }
   const [cameraError, setCameraError] = useState(null);
   const [tracking, setTracking] = useState(false);
+
+  // Keep stanceRef synced if prop changes
+  useEffect(() => {
+    stanceRef.current = stance;
+  }, [stance]);
+
+  /* ----------- Coach helpers (stable across renders) ----------- */
+
+  const scheduleTimeout = useCallback((fn, ms) => {
+    const t = setTimeout(() => {
+      pendingTimeoutsRef.current.delete(t);
+      fn();
+    }, ms);
+    pendingTimeoutsRef.current.add(t);
+    return t;
+  }, []);
+
+  const pickCombo = useCallback(() => {
+    const elapsedMs = Date.now() - roundStartAtRef.current;
+    const elapsedS = elapsedMs / 1000;
+    let maxLen;
+    if (elapsedS < 15) maxLen = 2;
+    else if (elapsedS < 35) maxLen = 3;
+    else maxLen = 4;
+    const pool = COMBO_LIBRARY.filter((c) => c.steps.length <= maxLen);
+    return pool[Math.floor(Math.random() * pool.length)];
+  }, []);
+
+  const startCombo = useCallback(() => {
+    if (finishedRef.current) return;
+    const combo = pickCombo();
+    currentComboRef.current = combo;
+    comboStepIdxRef.current = 0;
+    comboDeadlineRef.current = Date.now() + COMBO_STEP_WINDOW_MS;
+    calledStepsRef.current += combo.steps.length;
+    restingRef.current = false;
+    setLiveCombo({ steps: combo.steps, currentIdx: 0 });
+    speak(combo.steps.map((s) => s.name).join('. '));
+  }, [pickCombo]);
+
+  const endCombo = useCallback(
+    (success) => {
+      currentComboRef.current = null;
+      restingRef.current = true;
+      setLiveCombo(null);
+      if (success) playBell(660, 110, 'triangle');
+      scheduleTimeout(() => {
+        if (!finishedRef.current) startCombo();
+      }, COMBO_REST_MS);
+    },
+    [scheduleTimeout, startCombo],
+  );
+
+  const breakCombo = useCallback(() => {
+    if (comboStreakRef.current > 0) {
+      comboStreakRef.current = 0;
+      setLiveStreak(0);
+    }
+    playBell(180, 180, 'sawtooth');
+    vibrate(60);
+    endCombo(false);
+  }, [endCombo]);
+
+  const registerPunchSide = useCallback(
+    (side) => {
+      punchCountRef.current += 1;
+      setLivePunches(punchCountRef.current);
+
+      if (!currentComboRef.current || restingRef.current) return;
+      const expected =
+        currentComboRef.current.steps[comboStepIdxRef.current];
+      if (!expected) return;
+      const punchHand = sideToHand(side, stanceRef.current);
+
+      if (punchHand === expected.hand) {
+        comboStreakRef.current += 1;
+        if (comboStreakRef.current > bestStreakRef.current) {
+          bestStreakRef.current = comboStreakRef.current;
+        }
+        const mult = Math.min(comboStreakRef.current, COMBO_MULTIPLIER_CAP);
+        scoreRef.current += POINTS_PER_HIT * mult;
+        correctHitsRef.current += 1;
+        comboStepIdxRef.current += 1;
+        comboDeadlineRef.current = Date.now() + COMBO_STEP_WINDOW_MS;
+
+        playBell(880 + mult * 60, 70, 'triangle');
+        vibrate(20);
+
+        setLiveScore(scoreRef.current);
+        setLiveStreak(comboStreakRef.current);
+        setLiveCombo({
+          steps: currentComboRef.current.steps,
+          currentIdx: comboStepIdxRef.current,
+        });
+
+        if (
+          comboStepIdxRef.current >= currentComboRef.current.steps.length
+        ) {
+          endCombo(true);
+        }
+      } else {
+        breakCombo();
+      }
+    },
+    [breakCombo, endCombo],
+  );
+
+  /* ----------- Finish round ----------- */
 
   const finishRound = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
+
+    // Stop coach loop and any pending timeouts
+    if (coachTickRef.current) {
+      clearInterval(coachTickRef.current);
+      coachTickRef.current = null;
+    }
+    pendingTimeoutsRef.current.forEach((t) => clearTimeout(t));
+    pendingTimeoutsRef.current.clear();
+    stopSpeech();
+    playBell(220, 500, 'sine');
 
     const totalFrames = Math.max(1, frameCountRef.current);
     const guardScore = Math.max(
@@ -450,21 +852,35 @@ function RecordingScreen({ onFinish, onCancel }) {
       0,
       100 - (narrowStanceFramesRef.current / totalFrames) * 100,
     );
-    const overallScore = (guardScore + stanceScore) / 2;
+    const accuracyScore =
+      calledStepsRef.current > 0
+        ? (correctHitsRef.current / calledStepsRef.current) * 100
+        : 0;
+    const overallScore =
+      0.35 * guardScore + 0.35 * stanceScore + 0.3 * accuracyScore;
+    const ppm =
+      roundSeconds > 0
+        ? Math.round((punchCountRef.current / roundSeconds) * 60)
+        : 0;
 
     onFinish({
       overallScore,
       guardScore,
       stanceScore,
+      accuracyScore,
+      livePoints: scoreRef.current,
+      bestStreak: bestStreakRef.current,
       punches: punchCountRef.current,
       totalFrames,
       handsDroppedFrames: handsDroppedFramesRef.current,
       narrowStanceFrames: narrowStanceFramesRef.current,
-      durationSeconds: ROUND_SECONDS,
+      durationSeconds: roundSeconds,
+      ppm,
     });
-  }, [onFinish]);
+  }, [onFinish, roundSeconds]);
 
-  /* -------- Camera + detector init + RAF loop -------- */
+  /* ----------- Init: camera, detector, RAF loop ----------- */
+
   useEffect(() => {
     let active = true;
 
@@ -475,7 +891,6 @@ function RecordingScreen({ onFinish, onCancel }) {
         }
         const poseDetection = window.poseDetection;
 
-        // Detector
         const detector = await poseDetection.createDetector(
           poseDetection.SupportedModels.MoveNet,
           {
@@ -488,7 +903,6 @@ function RecordingScreen({ onFinish, onCancel }) {
         }
         detectorRef.current = detector;
 
-        // Camera
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: 'user',
@@ -514,8 +928,10 @@ function RecordingScreen({ onFinish, onCancel }) {
         if (!active) return;
 
         setTracking(true);
+        roundStartAtRef.current = Date.now();
         startTimer();
         runLoop();
+        startCoach();
       } catch (e) {
         console.error(e);
         if (active) {
@@ -532,7 +948,7 @@ function RecordingScreen({ onFinish, onCancel }) {
       const startedAt = Date.now();
       timerRef.current = setInterval(() => {
         const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-        const remaining = ROUND_SECONDS - elapsed;
+        const remaining = roundSeconds - elapsed;
         if (remaining <= 0) {
           setSecondsLeft(0);
           clearInterval(timerRef.current);
@@ -542,6 +958,23 @@ function RecordingScreen({ onFinish, onCancel }) {
           setSecondsLeft(remaining);
         }
       }, 250);
+    }
+
+    function startCoach() {
+      playBell(880, 240, 'sine');
+      speak('Round one. Hands up.');
+      scheduleTimeout(() => startCombo(), 1500);
+
+      coachTickRef.current = setInterval(() => {
+        if (finishedRef.current) return;
+        if (
+          currentComboRef.current &&
+          !restingRef.current &&
+          Date.now() > comboDeadlineRef.current
+        ) {
+          breakCombo();
+        }
+      }, 120);
     }
 
     async function runLoop() {
@@ -555,7 +988,6 @@ function RecordingScreen({ onFinish, onCancel }) {
       const step = async () => {
         if (!active || finishedRef.current) return;
 
-        // Keep canvas synced with intrinsic video size
         if (
           video.videoWidth &&
           (canvas.width !== video.videoWidth ||
@@ -572,7 +1004,7 @@ function RecordingScreen({ onFinish, onCancel }) {
             flipHorizontal: false,
           });
         } catch (_e) {
-          // swallow transient detection errors
+          /* swallow transient errors */
         }
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -602,7 +1034,6 @@ function RecordingScreen({ onFinish, onCancel }) {
       let guardBad = false;
       let stanceBad = false;
 
-      // Guard check
       if (ok(ls) && ok(rs) && ok(lw) && ok(rw)) {
         if (lw.y > ls.y || rw.y > rs.y) {
           guardBad = true;
@@ -610,7 +1041,6 @@ function RecordingScreen({ onFinish, onCancel }) {
         }
       }
 
-      // Stance check
       if (ok(ls) && ok(rs) && ok(la) && ok(ra)) {
         const ankleSpread = Math.abs(la.x - ra.x);
         const shoulderSpread = Math.abs(ls.x - rs.x);
@@ -620,7 +1050,6 @@ function RecordingScreen({ onFinish, onCancel }) {
         }
       }
 
-      // Punch detection
       if (ok(ls) && ok(rs)) {
         const shoulderWidth = Math.abs(ls.x - rs.x);
         const threshold = shoulderWidth * 1.5;
@@ -629,7 +1058,7 @@ function RecordingScreen({ onFinish, onCancel }) {
           const d = dist(lw, ls);
           if (d > threshold && !leftPunchActiveRef.current) {
             leftPunchActiveRef.current = true;
-            punchCountRef.current += 1;
+            registerPunchSide('left');
           } else if (d < threshold * 0.7 && leftPunchActiveRef.current) {
             leftPunchActiveRef.current = false;
           }
@@ -638,20 +1067,18 @@ function RecordingScreen({ onFinish, onCancel }) {
           const d = dist(rw, rs);
           if (d > threshold && !rightPunchActiveRef.current) {
             rightPunchActiveRef.current = true;
-            punchCountRef.current += 1;
+            registerPunchSide('right');
           } else if (d < threshold * 0.7 && rightPunchActiveRef.current) {
             rightPunchActiveRef.current = false;
           }
         }
       }
 
-      // Throttled warning UI update
       if (
         frameCountRef.current - lastWarningUpdateRef.current >=
         WARNING_THROTTLE_FRAMES
       ) {
         lastWarningUpdateRef.current = frameCountRef.current;
-        setLivePunches(punchCountRef.current);
         if (guardBad) setWarning('guard');
         else if (stanceBad) setWarning('stance');
         else setWarning(null);
@@ -670,6 +1097,13 @@ function RecordingScreen({ onFinish, onCancel }) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      if (coachTickRef.current) {
+        clearInterval(coachTickRef.current);
+        coachTickRef.current = null;
+      }
+      pendingTimeoutsRef.current.forEach((t) => clearTimeout(t));
+      pendingTimeoutsRef.current.clear();
+      stopSpeech();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -690,14 +1124,26 @@ function RecordingScreen({ onFinish, onCancel }) {
           /* noop */
         }
       }
+      try {
+        getAudioCtx()?.suspend?.();
+      } catch (_e) {
+        /* noop */
+      }
     };
-  }, [finishRound]);
+  }, [
+    finishRound,
+    roundSeconds,
+    registerPunchSide,
+    breakCombo,
+    scheduleTimeout,
+    startCombo,
+  ]);
 
-  const progress = ((ROUND_SECONDS - secondsLeft) / ROUND_SECONDS) * 100;
+  const progress = ((roundSeconds - secondsLeft) / roundSeconds) * 100;
+  const mult = Math.min(Math.max(liveStreak, 1), COMBO_MULTIPLIER_CAP);
 
   return (
     <div className="relative h-full min-h-screen w-full bg-black overflow-hidden">
-      {/* Video feed (mirrored) */}
       <video
         ref={videoRef}
         playsInline
@@ -706,51 +1152,79 @@ function RecordingScreen({ onFinish, onCancel }) {
         className="absolute inset-0 w-full h-full object-cover"
         style={{ transform: 'scaleX(-1)' }}
       />
-      {/* Skeleton overlay (mirrored to match video) */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full object-cover pointer-events-none"
         style={{ transform: 'scaleX(-1)' }}
       />
 
-      {/* Top vignette */}
-      <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/80 to-transparent pointer-events-none" />
-      {/* Bottom vignette */}
-      <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/85 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-black/85 to-transparent pointer-events-none" />
+      <div className="absolute inset-x-0 bottom-0 h-52 bg-gradient-to-t from-black/90 to-transparent pointer-events-none" />
 
       {/* Top HUD */}
-      <div className="absolute top-0 inset-x-0 px-5 pt-12">
-        <div className="flex items-center justify-between">
+      <div className="absolute top-0 inset-x-0 px-4 pt-12">
+        <div className="flex items-center justify-between gap-2">
           <button
             onClick={onCancel}
             className="px-3 py-1.5 rounded-full bg-black/50 backdrop-blur border border-white/10 text-white text-xs font-medium"
           >
             Cancel
           </button>
-          <div className="px-3 py-1.5 rounded-full bg-black/50 backdrop-blur border border-white/10 flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-white text-xs font-semibold tracking-wider uppercase">
-              {tracking ? 'Tracking' : 'Starting…'}
-            </span>
+
+          <div className="flex items-center gap-2">
+            <div className="px-3 py-1.5 rounded-full bg-black/50 backdrop-blur border border-white/10 flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-white text-[11px] font-semibold tracking-wider uppercase">
+                {tracking ? 'Live' : 'Start'}
+              </span>
+            </div>
+            {liveStreak >= 2 && (
+              <div className="px-2.5 py-1.5 rounded-full bg-emerald-500/20 backdrop-blur border border-emerald-500/40 text-emerald-300 text-[11px] font-bold tabular-nums">
+                ×{mult}
+              </div>
+            )}
           </div>
+
           <div className="px-3 py-1.5 rounded-full bg-black/50 backdrop-blur border border-white/10 text-white text-xs font-semibold tabular-nums">
             {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:
             {String(secondsLeft % 60).padStart(2, '0')}
           </div>
         </div>
 
-        {/* Progress bar */}
         <div className="mt-3 h-1 w-full bg-white/10 rounded-full overflow-hidden">
           <div
             className="h-full bg-emerald-500 transition-[width] duration-200 ease-linear"
             style={{ width: `${progress}%` }}
           />
         </div>
+
+        {/* Live score */}
+        <div className="mt-4 flex items-center justify-center">
+          <div className="px-4 py-1.5 rounded-2xl bg-black/55 backdrop-blur border border-white/10 flex items-baseline gap-2">
+            <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-400 font-medium">
+              Score
+            </span>
+            <span className="text-2xl font-semibold text-white tabular-nums">
+              {liveScore}
+            </span>
+          </div>
+        </div>
+
+        {/* Combo card */}
+        <div className="mt-3 min-h-[52px] flex items-center justify-center">
+          {liveCombo ? (
+            <ComboCard combo={liveCombo} />
+          ) : (
+            <div className="text-[11px] text-zinc-500 uppercase tracking-[0.18em]">
+              {tracking ? 'Listen for the call…' : 'Getting ready…'}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Center warning */}
       {warning && (
-        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
+        <div className="absolute inset-x-0 top-[58%] -translate-y-1/2 flex justify-center pointer-events-none">
           <div
             className={`px-5 py-3 rounded-2xl backdrop-blur-md border flex items-center gap-2 shadow-2xl ${
               warning === 'guard'
@@ -760,7 +1234,9 @@ function RecordingScreen({ onFinish, onCancel }) {
           >
             <AlertTriangle className="w-5 h-5" />
             <span className="font-semibold text-sm">
-              {warning === 'guard' ? 'Keep your hands up!' : 'Widen your stance!'}
+              {warning === 'guard'
+                ? 'Keep your hands up!'
+                : 'Widen your stance!'}
             </span>
           </div>
         </div>
@@ -769,11 +1245,16 @@ function RecordingScreen({ onFinish, onCancel }) {
       {/* Bottom HUD */}
       <div className="absolute bottom-0 inset-x-0 px-5 pb-8">
         <div className="grid grid-cols-3 gap-2 mb-4">
-          <HudStat label="Punches" value={livePunches} icon={<Zap className="w-3.5 h-3.5" />} />
           <HudStat
-            label="Round"
-            value={`${ROUND_SECONDS - secondsLeft}s`}
-            icon={<Activity className="w-3.5 h-3.5" />}
+            label="Streak"
+            value={liveStreak}
+            icon={<Sword className="w-3.5 h-3.5" />}
+            tone={liveStreak >= 3 ? 'emerald' : 'amber'}
+          />
+          <HudStat
+            label="Punches"
+            value={livePunches}
+            icon={<Zap className="w-3.5 h-3.5" />}
           />
           <HudStat
             label="Status"
@@ -791,7 +1272,6 @@ function RecordingScreen({ onFinish, onCancel }) {
         </button>
       </div>
 
-      {/* Camera error overlay */}
       {cameraError && (
         <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center px-8 text-center">
           <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
@@ -820,13 +1300,44 @@ function HudStat({ label, value, icon, tone = 'emerald' }) {
       : 'text-emerald-400';
   return (
     <div className="rounded-2xl bg-black/50 backdrop-blur border border-white/10 px-3 py-2">
-      <div className={`flex items-center gap-1 text-[10px] uppercase tracking-wider ${toneCls}`}>
+      <div
+        className={`flex items-center gap-1 text-[10px] uppercase tracking-wider ${toneCls}`}
+      >
         {icon}
         <span>{label}</span>
       </div>
       <p className="text-white font-semibold text-base mt-0.5 tabular-nums">
         {value}
       </p>
+    </div>
+  );
+}
+
+function ComboCard({ combo }) {
+  return (
+    <div className="px-3 py-2 rounded-2xl bg-black/55 backdrop-blur border border-white/10 flex items-center gap-1.5 max-w-[92%]">
+      {combo.steps.map((step, i) => {
+        const done = i < combo.currentIdx;
+        const active = i === combo.currentIdx;
+        return (
+          <React.Fragment key={i}>
+            {i > 0 && (
+              <ChevronRight className="w-3 h-3 text-zinc-600 shrink-0" />
+            )}
+            <span
+              className={`px-2 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-colors ${
+                active
+                  ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/50 shadow-[0_0_18px_-4px_rgba(16,185,129,0.7)]'
+                  : done
+                  ? 'bg-zinc-800/70 text-zinc-500 border border-zinc-800 line-through'
+                  : 'bg-zinc-900/80 text-zinc-300 border border-zinc-800'
+              }`}
+            >
+              {step.name}
+            </span>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -839,7 +1350,6 @@ function drawSkeleton(ctx, keypoints) {
   ctx.lineWidth = 4;
   ctx.strokeStyle = '#10b981';
 
-  // Bones
   for (const [a, b] of SKELETON_PAIRS) {
     const ka = getKp(keypoints, a);
     const kb = getKp(keypoints, b);
@@ -856,7 +1366,6 @@ function drawSkeleton(ctx, keypoints) {
     }
   }
 
-  // Joints
   ctx.fillStyle = '#ffffff';
   for (const k of keypoints) {
     if (k.score > KEYPOINT_CONFIDENCE) {
@@ -873,7 +1382,7 @@ function drawSkeleton(ctx, keypoints) {
 
 function ProcessingScreen({ results, onDone }) {
   useEffect(() => {
-    const t = setTimeout(onDone, 2000);
+    const t = setTimeout(onDone, 1800);
     return () => clearTimeout(t);
   }, [onDone]);
 
@@ -882,8 +1391,8 @@ function ProcessingScreen({ results, onDone }) {
     return [
       `Analyzed ${results.totalFrames} frames`,
       `Detected ${results.punches} punches`,
-      'Scoring guard discipline…',
-      'Scoring stance width…',
+      `Scoring combo accuracy…`,
+      `Tallying ${results.livePoints} arcade points`,
     ];
   }, [results]);
 
@@ -895,7 +1404,9 @@ function ProcessingScreen({ results, onDone }) {
           <Loader2 className="w-14 h-14 text-emerald-500 animate-spin" />
         </div>
       </div>
-      <h2 className="text-xl font-semibold text-white mb-2">Analyzing your round</h2>
+      <h2 className="text-xl font-semibold text-white mb-2">
+        Analyzing your round
+      </h2>
       <p className="text-sm text-zinc-400 mb-8 max-w-xs">
         Crunching telemetry from MoveNet keypoints to build your scorecard.
       </p>
@@ -919,6 +1430,38 @@ function ProcessingScreen({ results, onDone }) {
 /* ------------------------------------------------------------------ */
 
 function FeedbackScreen({ results, onHome, onAgain }) {
+  const savedRef = useRef(false);
+  const [badges, setBadges] = useState([]);
+  const [delta, setDelta] = useState(null); // { newPR: bool, prevBest: number }
+
+  useEffect(() => {
+    if (!results) return;
+    if (savedRef.current) return;
+    savedRef.current = true;
+
+    const prev = loadStats();
+    const next = nextStats(prev, results);
+    const overallInt = Math.round(results.overallScore);
+
+    const earned = [];
+    if (overallInt > prev.bestScore) {
+      earned.push({ label: 'New PR', icon: Trophy });
+    }
+    if (results.bestStreak >= 5) {
+      earned.push({ label: 'Combo Master', icon: Sword });
+    }
+    if (results.guardScore >= 90 && results.stanceScore >= 90) {
+      earned.push({ label: 'Iron Structure', icon: Shield });
+    }
+    if (prev.lastRoundDate !== next.lastRoundDate) {
+      earned.push({ label: `Day +${next.streakDays}`, icon: Flame });
+    }
+
+    setBadges(earned);
+    setDelta({ newPR: overallInt > prev.bestScore, prevBest: prev.bestScore });
+    saveStats(next);
+  }, [results]);
+
   if (!results) {
     return (
       <div className="flex flex-col h-full min-h-screen px-6 pt-12 pb-8 items-center justify-center">
@@ -936,12 +1479,12 @@ function FeedbackScreen({ results, onHome, onAgain }) {
   const overall = Math.round(results.overallScore);
   const guard = Math.round(results.guardScore);
   const stance = Math.round(results.stanceScore);
-
+  const accuracy = Math.round(results.accuracyScore);
   const tip = buildTip(results);
 
   return (
     <div className="flex flex-col h-full min-h-screen px-6 pt-12 pb-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <button
           onClick={onHome}
           className="text-zinc-500 text-sm hover:text-zinc-300"
@@ -954,19 +1497,23 @@ function FeedbackScreen({ results, onHome, onAgain }) {
         <div className="w-12" />
       </div>
 
-      {/* Score ring */}
-      <div className="flex flex-col items-center mb-6">
+      <div className="flex flex-col items-center mb-5">
         <ScoreRing score={overall} />
         <p className="mt-3 text-xs uppercase tracking-[0.18em] text-zinc-500 font-medium">
           Overall Score
         </p>
         <p className={`mt-1 text-sm font-medium ${scoreColor(overall)}`}>
-          {overall >= 80 ? 'Excellent work' : overall >= 60 ? 'Solid round' : 'Keep grinding'}
+          {delta?.newPR
+            ? 'New personal best!'
+            : overall >= 80
+            ? 'Excellent work'
+            : overall >= 60
+            ? 'Solid round'
+            : 'Keep grinding'}
         </p>
       </div>
 
-      {/* Subscores */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-3">
         <SubScoreCard
           icon={<Shield className="w-4 h-4" />}
           label="Guard"
@@ -977,31 +1524,29 @@ function FeedbackScreen({ results, onHome, onAgain }) {
           label="Stance"
           score={stance}
         />
+        <SubScoreCard
+          icon={<Sword className="w-4 h-4" />}
+          label="Accuracy"
+          score={accuracy}
+        />
       </div>
 
-      {/* Punches & telemetry */}
-      <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-4 mb-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-emerald-500/15 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-emerald-400" />
-            </div>
-            <div>
-              <p className="text-sm text-zinc-400">Total punches thrown</p>
-              <p className="text-xl font-semibold text-white">{results.punches}</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-zinc-500">Per minute</p>
-            <p className="text-lg font-semibold text-white tabular-nums">
-              {Math.round((results.punches / results.durationSeconds) * 60)}
-            </p>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <SmallStatCard
+          icon={<Zap className="w-4 h-4 text-emerald-400" />}
+          label="Punches"
+          primary={results.punches.toString()}
+          sub={`${results.ppm}/min`}
+        />
+        <SmallStatCard
+          icon={<Trophy className="w-4 h-4 text-emerald-400" />}
+          label="Best Combo"
+          primary={`×${results.bestStreak}`}
+          sub={`${results.livePoints} pts`}
+        />
       </div>
 
-      {/* Coach tip */}
-      <div className="rounded-2xl bg-gradient-to-br from-emerald-500/10 to-zinc-900 border border-emerald-500/20 p-4 mb-6">
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-500/10 to-zinc-900 border border-emerald-500/20 p-4 mb-3">
         <div className="flex items-center gap-2 mb-2">
           <Sparkles className="w-4 h-4 text-emerald-400" />
           <p className="text-xs uppercase tracking-wider text-emerald-400 font-semibold">
@@ -1010,6 +1555,23 @@ function FeedbackScreen({ results, onHome, onAgain }) {
         </div>
         <p className="text-sm text-zinc-200 leading-relaxed">{tip}</p>
       </div>
+
+      {badges.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {badges.map((b, i) => {
+            const Icon = b.icon;
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold"
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {b.label}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-auto space-y-3">
         <button
@@ -1034,31 +1596,60 @@ function FeedbackScreen({ results, onHome, onAgain }) {
 function buildTip(results) {
   const guard = results.guardScore;
   const stance = results.stanceScore;
+  const accuracy = results.accuracyScore;
   const punches = results.punches;
 
+  if (accuracy < 50 && results.bestStreak < 3) {
+    return 'React faster to the call. Hear the combo, then commit — even one beat late breaks the chain.';
+  }
   if (guard < 60 && guard <= stance) {
-    return 'Your hands dropped a lot. After every punch, snap your gloves back to your chin — think “shoot, then return.”';
+    return 'Your hands dropped a lot. After every punch, snap your gloves back to your chin — think "shoot, then return."';
   }
   if (stance < 60 && stance < guard) {
     return 'Your stance went narrow. Keep your feet roughly shoulder-width apart with the lead foot forward, ready to pivot.';
   }
   if (punches < 8) {
-    return 'Low work rate this round. Try a steady jab–jab–cross rhythm to build volume without sacrificing form.';
+    return 'Low work rate this round. Try to keep moving between combos so your heart rate stays up.';
   }
-  if (guard >= 85 && stance >= 85) {
-    return 'Strong structure throughout the round. Next time, add head movement after each combination to level up.';
+  if (guard >= 85 && stance >= 85 && accuracy >= 75) {
+    return 'Strong structure and sharp reactions. Next time, add head movement after each combination to level up.';
   }
-  return 'Good balance of guard and stance. Next round, focus on full hip rotation on the rear hand for more power.';
+  return 'Good balance overall. Next round, focus on full hip rotation on the rear hand for more power.';
+}
+
+function SmallStatCard({ icon, label, primary, sub }) {
+  return (
+    <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-3">
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-8 rounded-full bg-emerald-500/15 flex items-center justify-center">
+          {icon}
+        </div>
+        <div>
+          <p className="text-[11px] text-zinc-500 uppercase tracking-wider">
+            {label}
+          </p>
+          <p className="text-base font-semibold text-white tabular-nums leading-tight">
+            {primary}
+          </p>
+        </div>
+      </div>
+      {sub && (
+        <p className="text-[11px] text-zinc-500 mt-2 text-right tabular-nums">
+          {sub}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function SubScoreCard({ icon, label, score }) {
   return (
-    <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-4">
-      <div className="flex items-center gap-2 text-zinc-400 mb-2">
+    <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800 p-3">
+      <div className="flex items-center gap-1.5 text-zinc-400 mb-1.5">
         <span className={scoreColor(score)}>{icon}</span>
-        <span className="text-xs uppercase tracking-wider">{label}</span>
+        <span className="text-[10px] uppercase tracking-wider">{label}</span>
       </div>
-      <p className={`text-2xl font-semibold tabular-nums ${scoreColor(score)}`}>
+      <p className={`text-xl font-semibold tabular-nums ${scoreColor(score)}`}>
         {score}
       </p>
       <div className="mt-2 h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
