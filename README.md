@@ -1,105 +1,78 @@
-# Pose-Correction Engine
+# Muay Thai Guard Coach
 
-A **domain-agnostic, real-time pose-correction engine** that runs entirely in the browser.
-Point your webcam at yourself, pick a movement, and get live form feedback. It is *not* a
-Muay Thai app — it's an engine that happens to ship with a Muay Thai guard as one of its
-configs.
+A **real-time Muay Thai guard coach** that runs entirely in the browser. Point your webcam at
+yourself, hold your guard, and get live form feedback: it checks that **both hands stay up by
+your face** and **both arms stay bent**, and tells you exactly what to fix.
 
-## The one design decision that matters
+It **calibrates to you** in one tap — because the "correct" joint angles depend on your body
+proportions and your camera's height/angle, fixed thresholds mis-fire. Strike a good guard,
+press **Calibrate**, and the accepted ranges are set from *your* stance.
 
-The engine knows nothing about any specific movement. It only knows how to:
+## How it works
+
+Under the hood is a small, domain-agnostic engine:
 
 1. detect body pose (MediaPipe `PoseLandmarker`, 33 landmarks),
-2. compute joint angles, and
+2. compute joint angles **in 3D** from MediaPipe's metric *world* landmarks, and
 3. evaluate those angles against a **`MovementDefinition`** — which is **pure data**.
 
-Adding a new movement is a data change, not a code change. Every check reduces to: *"the angle
-at this joint must fall within `[min, max]`; if it's outside, say this."* A Muay Thai guard
-(upper body) and a squat hold (lower body) run through the exact same engine — only the JSON
-differs.
+> Angles are measured in 3D on purpose. Facing the camera, your forearms angle toward the lens,
+> so a 2D image-plane angle is foreshortened and jumpy — exactly the kind of noise that makes
+> feedback feel wrong. The depth-aware world landmarks give the true anatomical angle; the 2D
+> image landmarks are still used to draw the skeleton and to judge visibility.
+
+The guard is defined as data, not code (`src/movements/muaythai-guard.json`). Each check is
+just *"the angle at this joint must fall within `[min, max]`; if it's outside, say this cue."*
 
 ```
 src/
-  engine/        # domain-agnostic: pose detection, angle math, evaluation
+  engine/
     poseDetector.ts   # MediaPipe wrapper
     angles.ts         # pure angle math (unit-tested)
     evaluator.ts      # landmarks + MovementDefinition -> Feedback
+    smoothing.ts      # temporal landmark smoothing (cuts jitter)
+    calibration.ts    # observe your pose -> personal angle ranges (unit-tested)
     types.ts          # the contracts
     landmarks.ts      # the 33 landmark indices
-  movements/     # movements as data — adding one = adding a JSON file
-    muaythai-guard.json
-    squat-hold.json
-  components/    # CameraView, SkeletonOverlay, FeedbackPanel
+  movements/
+    muaythai-guard.json   # the guard, as data
+  components/         # CameraView, SkeletonOverlay, FeedbackPanel
   App.tsx
 ```
 
-There is no `if (movement === "guard")` anywhere in `src/engine/`. If there were, the whole
-point would be lost.
+### The guard, modelled honestly
 
-## How to add a movement
+A guard is fundamentally about **where your hands are**, so the checks use the wrist, not just
+the elbow:
 
-Drop a `*.json` file in `src/movements/`. It's picked up automatically (Vite glob import) and
-appears in the dropdown. The shape:
+| Check | Angle (vertex) | In range means |
+| --- | --- | --- |
+| Hand height (L/R) | hip → **shoulder** → wrist | the hand is up near your face |
+| Arm bent (L/R)    | shoulder → **elbow** → wrist | the arm is folded, glove tight |
 
-```jsonc
-{
-  "id": "squat-hold",
-  "name": "Squat Hold",
-  "joints": [
-    // angle at vertex B (points[1]), between B->A and B->C, must be in [targetMin, targetMax]
-    { "id": "left_knee", "label": "Left knee", "points": [23, 25, 27], "targetMin": 70, "targetMax": 110 }
-  ],
-  "cues": [
-    { "jointId": "left_knee", "when": "above", "cue": "Go deeper — bend your knees more." }
-  ]
-}
-```
+The hand-height angle grows as you raise your glove; the elbow angle grows as you straighten
+your arm. So "hands down" and "arm extended" each trigger the *correct* cue — fixing an earlier
+version whose "arm height" check looked at the elbow (not the hand) and told you to raise a hand
+that was already up.
 
-You don't have to write that JSON by hand. **"Create custom movement"** in the app opens a
-guided **builder**: pick each joint's three landmarks from named dropdowns, and — since the
-engine already measures the angle of every active joint every frame — the builder shows that
-**live angle** next to each joint with **Set min / Set max** buttons that capture the range
-straight from your own pose. Add cues, optionally enable rep-counting, and the draft previews
-live (skeleton + feedback) as you tune it. **Copy JSON** or **Download .json** when you're done
-(a "Paste JSON" tab is still there for hand-authoring). The pure draft/serialize/validate logic
-lives in `src/movements/authoring.ts` and is unit-tested.
+### Calibration
 
-> This directly answers the note that shipped ranges are just starting defaults: capture them
-> against your own body/camera setup instead of guessing.
+`createCalibrator` watches the angle each tracked joint actually produces while you hold a
+correct guard for ~2 seconds, then sets each joint's accepted range to your observed envelope
+padded by a margin (`src/engine/calibration.ts`, unit-tested). It's saved to `localStorage`, so
+it persists across sessions; **Reset to defaults** clears it. The engine stays movement-agnostic
+— calibration only rewrites the numbers, never the semantics.
 
-## Dynamic movements (v2)
-
-Movements aren't limited to static holds. Add an optional `dynamics` block and the same engine
-counts **reps** and reports **speed** — still pure data, still no engine changes. A rep is a
-two-threshold *hysteresis* cycle over one tracked joint's angle: it must cross fully into the
-"down" phase and back into "up" (or vice-versa) to count, so jitter near a single value can't
-double-count.
-
-```jsonc
-"dynamics": {
-  "trackJointId": "left_knee", // joint whose angle drives the cycle
-  "enterDownBelow": 110,        // enter the flexed phase when angle < this
-  "enterUpAbove": 160,          // enter the extended phase when angle > this
-  "countOn": "up",              // count a rep on entering this phase
-  "label": "Squats"
-}
-```
-
-The shipped `squat-hold` counts squats off the knee; `boxing-jab` counts jabs off the lead
-elbow and shows punch speed — same machinery, different joint, defined entirely in JSON. The
-math (rep state machine, angular velocity) lives in `src/engine/dynamics.ts` and is unit-tested.
-
-The engine is also **robustness-aware**: landmarks are temporally smoothed
-(`src/engine/smoothing.ts`) to cut jitter, and joints whose landmarks drop below a visibility
-threshold are marked unavailable — so stepping out of frame shows a neutral "step back" state
-instead of a false "wrong".
+The landmarks are also temporally **smoothed** to cut jitter, and joints whose landmarks drop
+below a visibility threshold are marked unavailable — so stepping out of frame shows a neutral
+"looking for you" state instead of a false "wrong".
 
 ## Run it
 
 ```bash
 npm install
 npm run dev        # open the printed URL, grant camera access
-npm test           # engine unit tests (angles, evaluator, smoothing, dynamics)
+npm test           # unit tests (angles, evaluator, smoothing, calibration, guard geometry)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 ```

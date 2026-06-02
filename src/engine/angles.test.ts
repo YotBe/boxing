@@ -33,4 +33,13 @@ describe('angleBetween', () => {
   it('returns 0 for a degenerate (zero-length) ray', () => {
     expect(angleBetween({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 })).toBe(0);
   });
+
+  it('uses depth: a right angle in the x/z plane reads 90, not 0', () => {
+    // Both rays sit in the image plane at the same point in 2D (x only differs
+    // via z), so a 2D-only calc would mis-read this. With z it's a clean 90°.
+    const a = { x: 1, y: 0, z: 0 };
+    const b = { x: 0, y: 0, z: 0 };
+    const c = { x: 0, y: 0, z: 1 };
+    expect(angleBetween(a, b, c)).toBeCloseTo(90, 5);
+  });
 });
