@@ -41,3 +41,44 @@ export const LEFT_HEEL = 29;
 export const RIGHT_HEEL = 30;
 export const LEFT_FOOT_INDEX = 31;
 export const RIGHT_FOOT_INDEX = 32;
+
+/**
+ * Ordered, human-readable list of the 33 landmarks for authoring UIs (e.g. the
+ * movement builder's joint dropdowns). This is still just vocabulary — naming
+ * the indices — so it stays domain-agnostic: nothing here is movement-specific.
+ */
+export const LANDMARK_OPTIONS: { index: number; label: string }[] = [
+  { index: NOSE, label: 'Nose' },
+  { index: LEFT_EYE_INNER, label: 'Left eye (inner)' },
+  { index: LEFT_EYE, label: 'Left eye' },
+  { index: LEFT_EYE_OUTER, label: 'Left eye (outer)' },
+  { index: RIGHT_EYE_INNER, label: 'Right eye (inner)' },
+  { index: RIGHT_EYE, label: 'Right eye' },
+  { index: RIGHT_EYE_OUTER, label: 'Right eye (outer)' },
+  { index: LEFT_EAR, label: 'Left ear' },
+  { index: RIGHT_EAR, label: 'Right ear' },
+  { index: MOUTH_LEFT, label: 'Mouth (left)' },
+  { index: MOUTH_RIGHT, label: 'Mouth (right)' },
+  { index: LEFT_SHOULDER, label: 'Left shoulder' },
+  { index: RIGHT_SHOULDER, label: 'Right shoulder' },
+  { index: LEFT_ELBOW, label: 'Left elbow' },
+  { index: RIGHT_ELBOW, label: 'Right elbow' },
+  { index: LEFT_WRIST, label: 'Left wrist' },
+  { index: RIGHT_WRIST, label: 'Right wrist' },
+  { index: LEFT_PINKY, label: 'Left pinky' },
+  { index: RIGHT_PINKY, label: 'Right pinky' },
+  { index: LEFT_INDEX, label: 'Left index' },
+  { index: RIGHT_INDEX, label: 'Right index' },
+  { index: LEFT_THUMB, label: 'Left thumb' },
+  { index: RIGHT_THUMB, label: 'Right thumb' },
+  { index: LEFT_HIP, label: 'Left hip' },
+  { index: RIGHT_HIP, label: 'Right hip' },
+  { index: LEFT_KNEE, label: 'Left knee' },
+  { index: RIGHT_KNEE, label: 'Right knee' },
+  { index: LEFT_ANKLE, label: 'Left ankle' },
+  { index: RIGHT_ANKLE, label: 'Right ankle' },
+  { index: LEFT_HEEL, label: 'Left heel' },
+  { index: RIGHT_HEEL, label: 'Right heel' },
+  { index: LEFT_FOOT_INDEX, label: 'Left foot' },
+  { index: RIGHT_FOOT_INDEX, label: 'Right foot' },
+];
