@@ -62,5 +62,12 @@
       "when": "above",
       "cue": "Sit your hips back and down."
     }
-  ]
+  ],
+  "dynamics": {
+    "trackJointId": "left_knee",
+    "enterDownBelow": 110,
+    "enterUpAbove": 160,
+    "countOn": "up",
+    "label": "Squats"
+  }
 }

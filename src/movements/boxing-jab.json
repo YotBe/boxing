@@ -1,0 +1,27 @@
+{
+  "id": "boxing-jab",
+  "name": "Boxing Jab",
+  "joints": [
+    {
+      "id": "right_elbow",
+      "label": "Lead arm",
+      "points": [12, 14, 16],
+      "targetMin": 150,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "right_elbow",
+      "when": "below",
+      "cue": "Fully extend the jab — snap it straight."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "right_elbow",
+    "enterDownBelow": 90,
+    "enterUpAbove": 150,
+    "countOn": "up",
+    "label": "Jabs"
+  }
+}

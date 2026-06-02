@@ -61,12 +61,39 @@ active live, with no rebuild.
 > Joint target ranges in the shipped movements are sensible starting defaults. Tune them
 > against real footage for your body/camera setup.
 
+## Dynamic movements (v2)
+
+Movements aren't limited to static holds. Add an optional `dynamics` block and the same engine
+counts **reps** and reports **speed** — still pure data, still no engine changes. A rep is a
+two-threshold *hysteresis* cycle over one tracked joint's angle: it must cross fully into the
+"down" phase and back into "up" (or vice-versa) to count, so jitter near a single value can't
+double-count.
+
+```jsonc
+"dynamics": {
+  "trackJointId": "left_knee", // joint whose angle drives the cycle
+  "enterDownBelow": 110,        // enter the flexed phase when angle < this
+  "enterUpAbove": 160,          // enter the extended phase when angle > this
+  "countOn": "up",              // count a rep on entering this phase
+  "label": "Squats"
+}
+```
+
+The shipped `squat-hold` counts squats off the knee; `boxing-jab` counts jabs off the lead
+elbow and shows punch speed — same machinery, different joint, defined entirely in JSON. The
+math (rep state machine, angular velocity) lives in `src/engine/dynamics.ts` and is unit-tested.
+
+The engine is also **robustness-aware**: landmarks are temporally smoothed
+(`src/engine/smoothing.ts`) to cut jitter, and joints whose landmarks drop below a visibility
+threshold are marked unavailable — so stepping out of frame shows a neutral "step back" state
+instead of a false "wrong".
+
 ## Run it
 
 ```bash
 npm install
 npm run dev        # open the printed URL, grant camera access
-npm test           # angle-math unit tests
+npm test           # engine unit tests (angles, evaluator, smoothing, dynamics)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 ```
