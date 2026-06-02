@@ -1,0 +1,66 @@
+{
+  "id": "muaythai-guard",
+  "name": "Muay Thai Guard",
+  "joints": [
+    {
+      "id": "left_elbow",
+      "label": "Left elbow",
+      "points": [11, 13, 15],
+      "targetMin": 20,
+      "targetMax": 90
+    },
+    {
+      "id": "right_elbow",
+      "label": "Right elbow",
+      "points": [12, 14, 16],
+      "targetMin": 20,
+      "targetMax": 90
+    },
+    {
+      "id": "left_shoulder",
+      "label": "Left arm height",
+      "points": [23, 11, 13],
+      "targetMin": 15,
+      "targetMax": 65
+    },
+    {
+      "id": "right_shoulder",
+      "label": "Right arm height",
+      "points": [24, 12, 14],
+      "targetMin": 15,
+      "targetMax": 65
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_elbow",
+      "when": "above",
+      "cue": "Bend your left arm — bring the glove to your cheek."
+    },
+    {
+      "jointId": "right_elbow",
+      "when": "above",
+      "cue": "Bend your right arm — bring the glove to your cheek."
+    },
+    {
+      "jointId": "left_shoulder",
+      "when": "below",
+      "cue": "Get your left hand up by your face."
+    },
+    {
+      "jointId": "right_shoulder",
+      "when": "below",
+      "cue": "Get your right hand up by your face."
+    },
+    {
+      "jointId": "left_shoulder",
+      "when": "above",
+      "cue": "Tuck your left elbow in toward your ribs."
+    },
+    {
+      "jointId": "right_shoulder",
+      "when": "above",
+      "cue": "Tuck your right elbow in toward your ribs."
+    }
+  ]
+}

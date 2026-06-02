@@ -1,0 +1,66 @@
+{
+  "id": "squat-hold",
+  "name": "Squat Hold",
+  "joints": [
+    {
+      "id": "left_knee",
+      "label": "Left knee",
+      "points": [23, 25, 27],
+      "targetMin": 70,
+      "targetMax": 110
+    },
+    {
+      "id": "right_knee",
+      "label": "Right knee",
+      "points": [24, 26, 28],
+      "targetMin": 70,
+      "targetMax": 110
+    },
+    {
+      "id": "left_hip",
+      "label": "Left hip",
+      "points": [11, 23, 25],
+      "targetMin": 55,
+      "targetMax": 120
+    },
+    {
+      "id": "right_hip",
+      "label": "Right hip",
+      "points": [12, 24, 26],
+      "targetMin": 55,
+      "targetMax": 120
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_knee",
+      "when": "above",
+      "cue": "Go deeper — bend your knees more."
+    },
+    {
+      "jointId": "right_knee",
+      "when": "above",
+      "cue": "Go deeper — bend your knees more."
+    },
+    {
+      "jointId": "left_knee",
+      "when": "below",
+      "cue": "Don't squat past parallel — ease up slightly."
+    },
+    {
+      "jointId": "right_knee",
+      "when": "below",
+      "cue": "Don't squat past parallel — ease up slightly."
+    },
+    {
+      "jointId": "left_hip",
+      "when": "above",
+      "cue": "Sit your hips back and down."
+    },
+    {
+      "jointId": "right_hip",
+      "when": "above",
+      "cue": "Sit your hips back and down."
+    }
+  ]
+}
