@@ -15,7 +15,7 @@ import { movements as builtInMovements } from './movements';
 // frame on the canvas; the text panel doesn't need 60fps).
 const PANEL_UPDATE_MS = 100;
 
-const REPO_URL = 'https://github.com/YotBe/boxing';
+const REPO_URL = 'https://github.com/YotBe/pose-coach';
 
 function isMovementDefinition(value: unknown): value is MovementDefinition {
   if (typeof value !== 'object' || value === null) return false;
