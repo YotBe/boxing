@@ -4,14 +4,18 @@ import FeedbackPanel from './components/FeedbackPanel';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
+import { createDynamicTracker } from './engine/dynamics';
 import { evaluate } from './engine/evaluator';
 import { createPoseDetector, type PoseDetector } from './engine/poseDetector';
+import { createSmoother } from './engine/smoothing';
 import type { Feedback, MovementDefinition } from './engine/types';
 import { movements as builtInMovements } from './movements';
 
 // How often to push feedback into React state (the skeleton is drawn every
 // frame on the canvas; the text panel doesn't need 60fps).
 const PANEL_UPDATE_MS = 100;
+
+const REPO_URL = 'https://github.com/YotBe/boxing';
 
 function isMovementDefinition(value: unknown): value is MovementDefinition {
   if (typeof value !== 'object' || value === null) return false;
@@ -28,6 +32,10 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<SkeletonOverlayHandle>(null);
   const detectorRef = useRef<PoseDetector | null>(null);
+
+  // Stateful per-session engine helpers (created once).
+  const smootherRef = useRef(createSmoother(0.5));
+  const trackerRef = useRef(createDynamicTracker());
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -54,6 +62,14 @@ export default function App() {
   // Keep the active movement available to the rAF loop without restarting it.
   const activeMovementRef = useRef(activeMovement);
   activeMovementRef.current = activeMovement;
+
+  // Reset smoothing + rep state whenever the movement changes, so reps and the
+  // smoothed history don't bleed across movements.
+  useEffect(() => {
+    smootherRef.current.reset();
+    trackerRef.current.reset();
+    setFeedback(null);
+  }, [activeMovement?.id]);
 
   // Initialize the detector once.
   useEffect(() => {
@@ -109,10 +125,22 @@ export default function App() {
       }
 
       const movement = activeMovementRef.current;
-      const landmarks = result.landmarks[0];
-      const fb = landmarks ? evaluate(landmarks, movement) : null;
+      const raw = result.landmarks[0];
+      const smoothed = raw ? smootherRef.current.smooth(raw) : undefined;
 
-      overlayRef.current?.draw(result, fb, movement);
+      let fb: Feedback | null = null;
+      if (smoothed) {
+        fb = evaluate(smoothed, movement);
+        if (movement.dynamics) {
+          fb.dynamic = trackerRef.current.update(
+            fb.joints,
+            timestampMs,
+            movement.dynamics,
+          );
+        }
+      }
+
+      overlayRef.current?.draw(smoothed, fb, movement);
 
       if (timestampMs - lastPanel >= PANEL_UPDATE_MS) {
         lastPanel = timestampMs;
@@ -145,11 +173,20 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4 p-4">
-      <header>
+      <header className="flex flex-col gap-1">
         <h1 className="text-xl font-bold">Pose-Correction Engine</h1>
         <p className="text-sm text-zinc-400">
-          A domain-agnostic, real-time form coach. Every movement is pure data —
-          adding one is a JSON file, not a code change.
+          A real-time form coach where every movement — its joints, cues, and rep
+          rules — is <span className="text-zinc-200">pure data</span>. Adding one
+          is a JSON file, not a code change.{' '}
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="text-green-400 underline-offset-2 hover:underline"
+          >
+            How it works →
+          </a>
         </p>
       </header>
 
@@ -226,7 +263,14 @@ export default function App() {
       </div>
 
       {activeMovement && (
-        <FeedbackPanel feedback={feedback} movement={activeMovement} />
+        <FeedbackPanel
+          feedback={feedback}
+          movement={activeMovement}
+          onResetReps={() => {
+            trackerRef.current.reset();
+            setFeedback(null);
+          }}
+        />
       )}
     </div>
   );
