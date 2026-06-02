@@ -13,8 +13,13 @@ press **Calibrate**, and the accepted ranges are set from *your* stance.
 Under the hood is a small, domain-agnostic engine:
 
 1. detect body pose (MediaPipe `PoseLandmarker`, 33 landmarks),
-2. compute joint angles, and
+2. compute joint angles **in 3D** from MediaPipe's metric *world* landmarks, and
 3. evaluate those angles against a **`MovementDefinition`** — which is **pure data**.
+
+> Angles are measured in 3D on purpose. Facing the camera, your forearms angle toward the lens,
+> so a 2D image-plane angle is foreshortened and jumpy — exactly the kind of noise that makes
+> feedback feel wrong. The depth-aware world landmarks give the true anatomical angle; the 2D
+> image landmarks are still used to draw the skeleton and to judge visibility.
 
 The guard is defined as data, not code (`src/movements/muaythai-guard.json`). Each check is
 just *"the angle at this joint must fall within `[min, max]`; if it's outside, say this cue."*

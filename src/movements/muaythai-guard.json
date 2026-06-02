@@ -6,14 +6,14 @@
       "id": "left_hand_height",
       "label": "Left hand up",
       "points": [23, 11, 15],
-      "targetMin": 110,
+      "targetMin": 90,
       "targetMax": 180
     },
     {
       "id": "right_hand_height",
       "label": "Right hand up",
       "points": [24, 12, 16],
-      "targetMin": 110,
+      "targetMin": 90,
       "targetMax": 180
     },
     {
@@ -21,14 +21,14 @@
       "label": "Left arm bent",
       "points": [11, 13, 15],
       "targetMin": 10,
-      "targetMax": 95
+      "targetMax": 120
     },
     {
       "id": "right_elbow",
       "label": "Right arm bent",
       "points": [12, 14, 16],
       "targetMin": 10,
-      "targetMax": 95
+      "targetMax": 120
     }
   ],
   "cues": [

@@ -108,7 +108,9 @@ export function applyCalibration(
   };
 }
 
-const STORAGE_PREFIX = 'pose-coach:calibration:';
+// Versioned: angles are now computed in 3D, so any v1 (2D) calibration is on a
+// different scale and must be ignored rather than loaded.
+const STORAGE_PREFIX = 'pose-coach:calibration:v2:';
 
 function storage(): Storage | null {
   try {

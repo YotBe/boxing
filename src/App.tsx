@@ -47,7 +47,10 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<SkeletonOverlayHandle>(null);
   const detectorRef = useRef<PoseDetector | null>(null);
-  const smootherRef = useRef(createSmoother(0.5));
+  // Separate smoothers: image landmarks drive the on-screen skeleton; world
+  // (3D) landmarks drive the angle evaluation.
+  const imgSmootherRef = useRef(createSmoother(0.5));
+  const worldSmootherRef = useRef(createSmoother(0.5));
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -136,15 +139,29 @@ export default function App() {
       }
 
       const current = movementRef.current;
-      const raw = result.landmarks[0];
-      const smoothed = raw ? smootherRef.current.smooth(raw) : undefined;
+      const rawImg = result.landmarks[0];
+      const rawWorld = result.worldLandmarks[0];
+      const img = rawImg ? imgSmootherRef.current.smooth(rawImg) : undefined;
+      const world = rawWorld ? worldSmootherRef.current.smooth(rawWorld) : undefined;
 
-      const fb = smoothed ? evaluate(smoothed, current) : null;
+      // Evaluate on the depth-aware world landmarks (correct angles for a
+      // camera-facing guard), but take visibility from the image landmarks,
+      // whose visibility scores are the reliable in/out-of-frame signal.
+      let fb: Feedback | null = null;
+      if (world) {
+        const forEval = img
+          ? world.map((w, i) => ({
+              ...w,
+              visibility: img[i]?.visibility ?? w.visibility,
+            }))
+          : world;
+        fb = evaluate(forEval, current);
+      }
 
       // Feed frames into a calibration capture in progress (full frame rate).
       if (capturingRef.current && fb) calibratorRef.current?.add(fb.joints);
 
-      overlayRef.current?.draw(smoothed, fb, current);
+      overlayRef.current?.draw(img, fb, current);
 
       if (timestampMs - lastPanel >= PANEL_UPDATE_MS) {
         lastPanel = timestampMs;
