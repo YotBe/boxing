@@ -55,11 +55,17 @@ appears in the dropdown. The shape:
 }
 ```
 
-The app also has a **"Load custom movement"** box: paste a `MovementDefinition` and it's
-active live, with no rebuild.
+You don't have to write that JSON by hand. **"Create custom movement"** in the app opens a
+guided **builder**: pick each joint's three landmarks from named dropdowns, and — since the
+engine already measures the angle of every active joint every frame — the builder shows that
+**live angle** next to each joint with **Set min / Set max** buttons that capture the range
+straight from your own pose. Add cues, optionally enable rep-counting, and the draft previews
+live (skeleton + feedback) as you tune it. **Copy JSON** or **Download .json** when you're done
+(a "Paste JSON" tab is still there for hand-authoring). The pure draft/serialize/validate logic
+lives in `src/movements/authoring.ts` and is unit-tested.
 
-> Joint target ranges in the shipped movements are sensible starting defaults. Tune them
-> against real footage for your body/camera setup.
+> This directly answers the note that shipped ranges are just starting defaults: capture them
+> against your own body/camera setup instead of guessing.
 
 ## Dynamic movements (v2)
 

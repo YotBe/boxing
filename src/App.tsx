@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CameraView from './components/CameraView';
 import FeedbackPanel from './components/FeedbackPanel';
+import MovementBuilder, { type LiveAngle } from './components/MovementBuilder';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
@@ -10,12 +11,22 @@ import { createPoseDetector, type PoseDetector } from './engine/poseDetector';
 import { createSmoother } from './engine/smoothing';
 import type { Feedback, MovementDefinition } from './engine/types';
 import { movements as builtInMovements } from './movements';
+import {
+  draftToDefinition,
+  emptyDraft,
+  type MovementDraft,
+} from './movements/authoring';
 
 // How often to push feedback into React state (the skeleton is drawn every
 // frame on the canvas; the text panel doesn't need 60fps).
 const PANEL_UPDATE_MS = 100;
 
 const REPO_URL = 'https://github.com/YotBe/pose-coach';
+
+// Stable id for the builder's live-preview movement, decoupled from the draft's
+// own id so editing the name doesn't churn the active movement (which would
+// reset smoothing/reps) while you tune it.
+const PREVIEW_ID = '__builder_preview__';
 
 function isMovementDefinition(value: unknown): value is MovementDefinition {
   if (typeof value !== 'object' || value === null) return false;
@@ -58,6 +69,32 @@ export default function App() {
   const [customJson, setCustomJson] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
   const [showCustom, setShowCustom] = useState(false);
+  const [customTab, setCustomTab] = useState<'build' | 'json'>('build');
+  const [draft, setDraft] = useState<MovementDraft>(emptyDraft);
+
+  // Live measured angle per joint, surfaced to the builder so ranges can be
+  // captured from a real pose. Keyed by joint id, straight from the engine.
+  const liveAngles = useMemo(() => {
+    const map = new Map<string, LiveAngle>();
+    feedback?.joints.forEach((j) =>
+      map.set(j.id, { angle: j.angle, available: j.available }),
+    );
+    return map;
+  }, [feedback]);
+
+  // Editing the builder previews the draft live: serialize it under a stable
+  // preview id and make it the active movement so the overlay + panel react.
+  function handleDraftChange(next: MovementDraft) {
+    setDraft(next);
+    if (next.joints.length > 0) {
+      setCustomMovement({
+        ...draftToDefinition(next),
+        id: PREVIEW_ID,
+        name: next.name.trim() || 'New movement (preview)',
+      });
+      setActiveId(PREVIEW_ID);
+    }
+  }
 
   // Keep the active movement available to the rAF loop without restarting it.
   const activeMovementRef = useRef(activeMovement);
@@ -211,35 +248,62 @@ export default function App() {
           onClick={() => setShowCustom((s) => !s)}
           className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
         >
-          {showCustom ? 'Hide custom JSON' : 'Load custom movement'}
+          {showCustom ? 'Hide custom movement' : 'Create custom movement'}
         </button>
       </div>
 
       {showCustom && (
-        <div className="flex flex-col gap-2 rounded-2xl bg-zinc-900 p-4">
-          <p className="text-sm text-zinc-400">
-            Paste a MovementDefinition to add a brand-new movement live — no code,
-            no reload.
-          </p>
-          <textarea
-            value={customJson}
-            onChange={(e) => setCustomJson(e.target.value)}
-            placeholder='{ "id": "...", "name": "...", "joints": [...], "cues": [...] }'
-            rows={8}
-            className="w-full rounded-lg bg-black/50 p-3 font-mono text-xs"
-          />
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={loadCustomMovement}
-              className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500"
-            >
-              Load &amp; activate
-            </button>
-            {customError && (
-              <span className="text-sm text-red-400">{customError}</span>
-            )}
+        <div className="flex flex-col gap-3 rounded-2xl bg-zinc-900 p-4">
+          <div className="flex gap-2">
+            {(['build', 'json'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setCustomTab(tab)}
+                className={`rounded-lg px-3 py-1.5 text-sm ${
+                  customTab === tab
+                    ? 'bg-zinc-700 text-zinc-100'
+                    : 'text-zinc-400 hover:bg-zinc-800'
+                }`}
+              >
+                {tab === 'build' ? 'Build' : 'Paste JSON'}
+              </button>
+            ))}
           </div>
+
+          {customTab === 'build' ? (
+            <MovementBuilder
+              draft={draft}
+              onChange={handleDraftChange}
+              liveAngles={liveAngles}
+            />
+          ) : (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-zinc-400">
+                Paste a MovementDefinition to add a brand-new movement live — no
+                code, no reload.
+              </p>
+              <textarea
+                value={customJson}
+                onChange={(e) => setCustomJson(e.target.value)}
+                placeholder='{ "id": "...", "name": "...", "joints": [...], "cues": [...] }'
+                rows={8}
+                className="w-full rounded-lg bg-black/50 p-3 font-mono text-xs"
+              />
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={loadCustomMovement}
+                  className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500"
+                >
+                  Load &amp; activate
+                </button>
+                {customError && (
+                  <span className="text-sm text-red-400">{customError}</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
