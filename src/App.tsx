@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CameraView from './components/CameraView';
 import FeedbackPanel from './components/FeedbackPanel';
-import MovementBuilder, { type LiveAngle } from './components/MovementBuilder';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
-import { createDynamicTracker } from './engine/dynamics';
+import {
+  applyCalibration,
+  clearCalibration,
+  createCalibrator,
+  loadCalibration,
+  saveCalibration,
+  type Calibrator,
+  type CalibrationMap,
+} from './engine/calibration';
 import { evaluate } from './engine/evaluator';
 import { createPoseDetector, type PoseDetector } from './engine/poseDetector';
 import { createSmoother } from './engine/smoothing';
-import type { Feedback, MovementDefinition } from './engine/types';
-import { movements as builtInMovements } from './movements';
-import {
-  draftToDefinition,
-  emptyDraft,
-  type MovementDraft,
-} from './movements/authoring';
+import type { Feedback } from './engine/types';
+import { movements } from './movements';
 
 // How often to push feedback into React state (the skeleton is drawn every
 // frame on the canvas; the text panel doesn't need 60fps).
@@ -23,90 +25,61 @@ const PANEL_UPDATE_MS = 100;
 
 const REPO_URL = 'https://github.com/YotBe/pose-coach';
 
-// Stable id for the builder's live-preview movement, decoupled from the draft's
-// own id so editing the name doesn't churn the active movement (which would
-// reset smoothing/reps) while you tune it.
-const PREVIEW_ID = '__builder_preview__';
+// The one movement this app coaches. The engine stays data-driven — the guard
+// is still defined as JSON in src/movements — we just ship a focused product.
+const GUARD =
+  movements.find((m) => m.id === 'muaythai-guard') ?? movements[0];
 
-function isMovementDefinition(value: unknown): value is MovementDefinition {
-  if (typeof value !== 'object' || value === null) return false;
-  const m = value as Record<string, unknown>;
-  return (
-    typeof m.id === 'string' &&
-    typeof m.name === 'string' &&
-    Array.isArray(m.joints) &&
-    Array.isArray(m.cues)
-  );
-}
+// Calibration capture timing.
+const COUNTDOWN_MS = 3000;
+const CAPTURE_MS = 2000;
+const CALIB_MARGIN_DEG = 15; // padding added around your observed guard angles
+const MIN_CALIB_SAMPLES = 10; // full-visibility frames needed for a valid capture
+
+type CalibUi =
+  | { phase: 'idle' }
+  | { phase: 'countdown'; secondsLeft: number }
+  | { phase: 'capturing' }
+  | { phase: 'done' }
+  | { phase: 'error'; message: string };
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<SkeletonOverlayHandle>(null);
   const detectorRef = useRef<PoseDetector | null>(null);
-
-  // Stateful per-session engine helpers (created once).
   const smootherRef = useRef(createSmoother(0.5));
-  const trackerRef = useRef(createDynamicTracker());
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [customMovement, setCustomMovement] = useState<MovementDefinition | null>(
-    null,
-  );
-  const allMovements = useMemo(
-    () => (customMovement ? [...builtInMovements, customMovement] : builtInMovements),
-    [customMovement],
-  );
-
-  const [activeId, setActiveId] = useState(builtInMovements[0]?.id ?? '');
-  const activeMovement =
-    allMovements.find((m) => m.id === activeId) ?? allMovements[0];
-
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
-  const [customJson, setCustomJson] = useState('');
-  const [customError, setCustomError] = useState<string | null>(null);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customTab, setCustomTab] = useState<'build' | 'json'>('build');
-  const [draft, setDraft] = useState<MovementDraft>(emptyDraft);
+  // Saved per-body/per-camera calibration (persisted in localStorage).
+  const [calibration, setCalibration] = useState<CalibrationMap | null>(() =>
+    loadCalibration(GUARD.id),
+  );
+  const [calibUi, setCalibUi] = useState<CalibUi>({ phase: 'idle' });
 
-  // Live measured angle per joint, surfaced to the builder so ranges can be
-  // captured from a real pose. Keyed by joint id, straight from the engine.
-  const liveAngles = useMemo(() => {
-    const map = new Map<string, LiveAngle>();
-    feedback?.joints.forEach((j) =>
-      map.set(j.id, { angle: j.angle, available: j.available }),
-    );
-    return map;
-  }, [feedback]);
+  // The guard with its angle ranges overridden by calibration, if any.
+  const movement = useMemo(
+    () => (calibration ? applyCalibration(GUARD, calibration) : GUARD),
+    [calibration],
+  );
 
-  // Editing the builder previews the draft live: serialize it under a stable
-  // preview id and make it the active movement so the overlay + panel react.
-  function handleDraftChange(next: MovementDraft) {
-    setDraft(next);
-    if (next.joints.length > 0) {
-      setCustomMovement({
-        ...draftToDefinition(next),
-        id: PREVIEW_ID,
-        name: next.name.trim() || 'New movement (preview)',
-      });
-      setActiveId(PREVIEW_ID);
-    }
+  // Make the current movement available to the rAF loop without restarting it.
+  const movementRef = useRef(movement);
+  movementRef.current = movement;
+
+  // Calibration capture state, read inside the rAF tick.
+  const calibratorRef = useRef<Calibrator | null>(null);
+  const capturingRef = useRef(false);
+  const timersRef = useRef<number[]>([]);
+
+  function clearTimers() {
+    timersRef.current.forEach((id) => window.clearTimeout(id));
+    timersRef.current.forEach((id) => window.clearInterval(id));
+    timersRef.current = [];
   }
-
-  // Keep the active movement available to the rAF loop without restarting it.
-  const activeMovementRef = useRef(activeMovement);
-  activeMovementRef.current = activeMovement;
-
-  // Reset smoothing + rep state whenever the movement changes, so reps and the
-  // smoothed history don't bleed across movements.
-  useEffect(() => {
-    smootherRef.current.reset();
-    trackerRef.current.reset();
-    setFeedback(null);
-  }, [activeMovement?.id]);
 
   // Initialize the detector once.
   useEffect(() => {
@@ -129,6 +102,7 @@ export default function App() {
       });
     return () => {
       cancelled = true;
+      clearTimers();
       detectorRef.current?.close();
       detectorRef.current = null;
     };
@@ -161,23 +135,16 @@ export default function App() {
         return;
       }
 
-      const movement = activeMovementRef.current;
+      const current = movementRef.current;
       const raw = result.landmarks[0];
       const smoothed = raw ? smootherRef.current.smooth(raw) : undefined;
 
-      let fb: Feedback | null = null;
-      if (smoothed) {
-        fb = evaluate(smoothed, movement);
-        if (movement.dynamics) {
-          fb.dynamic = trackerRef.current.update(
-            fb.joints,
-            timestampMs,
-            movement.dynamics,
-          );
-        }
-      }
+      const fb = smoothed ? evaluate(smoothed, current) : null;
 
-      overlayRef.current?.draw(smoothed, fb, movement);
+      // Feed frames into a calibration capture in progress (full frame rate).
+      if (capturingRef.current && fb) calibratorRef.current?.add(fb.joints);
+
+      overlayRef.current?.draw(smoothed, fb, current);
 
       if (timestampMs - lastPanel >= PANEL_UPDATE_MS) {
         lastPanel = timestampMs;
@@ -189,33 +156,78 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [cameraReady, detectorReady]);
 
-  function loadCustomMovement() {
-    try {
-      const parsed: unknown = JSON.parse(customJson);
-      if (!isMovementDefinition(parsed)) {
-        setCustomError(
-          'JSON parsed, but it is missing required fields (id, name, joints[], cues[]).',
-        );
-        return;
-      }
-      setCustomMovement(parsed);
-      setActiveId(parsed.id);
-      setCustomError(null);
-    } catch (err) {
-      setCustomError(
-        err instanceof Error ? `Invalid JSON: ${err.message}` : 'Invalid JSON.',
-      );
+  function finishCalibration() {
+    capturingRef.current = false;
+    const c = calibratorRef.current;
+    if (!c) {
+      setCalibUi({ phase: 'idle' });
+      return;
     }
+    const cal = c.finish(CALIB_MARGIN_DEG);
+    const sawEveryJoint = Object.keys(cal).length === GUARD.joints.length;
+    if (c.samples() < MIN_CALIB_SAMPLES || !sawEveryJoint) {
+      setCalibUi({
+        phase: 'error',
+        message:
+          'Couldn’t see your guard clearly. Get your head, shoulders, and both hands in frame, then try again.',
+      });
+      return;
+    }
+    saveCalibration(GUARD.id, cal);
+    setCalibration(cal);
+    setCalibUi({ phase: 'done' });
   }
+
+  function startCalibration() {
+    clearTimers();
+    calibratorRef.current = createCalibrator(GUARD.joints.map((j) => j.id));
+    capturingRef.current = false;
+    setCalibUi({ phase: 'countdown', secondsLeft: 3 });
+
+    let secondsLeft = 3;
+    const iv = window.setInterval(() => {
+      secondsLeft -= 1;
+      if (secondsLeft > 0) setCalibUi({ phase: 'countdown', secondsLeft });
+    }, 1000);
+    timersRef.current.push(iv);
+
+    const toCapture = window.setTimeout(() => {
+      window.clearInterval(iv);
+      calibratorRef.current?.reset();
+      capturingRef.current = true;
+      setCalibUi({ phase: 'capturing' });
+      const toFinish = window.setTimeout(finishCalibration, CAPTURE_MS);
+      timersRef.current.push(toFinish);
+    }, COUNTDOWN_MS);
+    timersRef.current.push(toCapture);
+  }
+
+  function resetCalibration() {
+    clearTimers();
+    capturingRef.current = false;
+    clearCalibration(GUARD.id);
+    setCalibration(null);
+    setCalibUi({ phase: 'idle' });
+  }
+
+  const calibrating =
+    calibUi.phase === 'countdown' || calibUi.phase === 'capturing';
+
+  const overlayMessage =
+    calibUi.phase === 'countdown'
+      ? `Hold your best guard… ${calibUi.secondsLeft}`
+      : calibUi.phase === 'capturing'
+        ? 'Capturing your guard — hold still…'
+        : null;
 
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4 p-4">
       <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-bold">Pose-Correction Engine</h1>
+        <h1 className="text-xl font-bold">Muay Thai Guard Coach</h1>
         <p className="text-sm text-zinc-400">
-          A real-time form coach where every movement — its joints, cues, and rep
-          rules — is <span className="text-zinc-200">pure data</span>. Adding one
-          is a JSON file, not a code change.{' '}
+          Real-time feedback on your guard: it checks that both hands stay up by
+          your face and your arms stay bent. Tunes to your body and camera in one
+          tap.{' '}
           <a
             href={REPO_URL}
             target="_blank"
@@ -227,85 +239,37 @@ export default function App() {
         </p>
       </header>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="text-sm text-zinc-400" htmlFor="movement">
-          Movement
-        </label>
-        <select
-          id="movement"
-          value={activeMovement?.id ?? ''}
-          onChange={(e) => setActiveId(e.target.value)}
-          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm"
-        >
-          {allMovements.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
+      {/* Calibration */}
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-zinc-900 p-4">
         <button
           type="button"
-          onClick={() => setShowCustom((s) => !s)}
-          className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+          onClick={startCalibration}
+          disabled={!cameraReady || !detectorReady || calibrating}
+          className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500 disabled:opacity-40"
         >
-          {showCustom ? 'Hide custom movement' : 'Create custom movement'}
+          {calibration ? 'Re-calibrate to my guard' : 'Calibrate to my guard'}
         </button>
+        {calibration && !calibrating && (
+          <button
+            type="button"
+            onClick={resetCalibration}
+            className="rounded-lg bg-zinc-800 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-700"
+          >
+            Reset to defaults
+          </button>
+        )}
+        <span className="text-sm text-zinc-400">
+          {calibUi.phase === 'capturing'
+            ? 'Hold still…'
+            : calibUi.phase === 'countdown'
+              ? `Get into your guard… ${calibUi.secondsLeft}`
+              : calibUi.phase === 'error'
+                ? <span className="text-amber-400">{calibUi.message}</span>
+                : calibration
+                  ? 'Calibrated to you ✓ — thresholds set from your stance.'
+                  : 'Using default thresholds. Calibrate for accurate, personal feedback.'}
+        </span>
       </div>
-
-      {showCustom && (
-        <div className="flex flex-col gap-3 rounded-2xl bg-zinc-900 p-4">
-          <div className="flex gap-2">
-            {(['build', 'json'] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setCustomTab(tab)}
-                className={`rounded-lg px-3 py-1.5 text-sm ${
-                  customTab === tab
-                    ? 'bg-zinc-700 text-zinc-100'
-                    : 'text-zinc-400 hover:bg-zinc-800'
-                }`}
-              >
-                {tab === 'build' ? 'Build' : 'Paste JSON'}
-              </button>
-            ))}
-          </div>
-
-          {customTab === 'build' ? (
-            <MovementBuilder
-              draft={draft}
-              onChange={handleDraftChange}
-              liveAngles={liveAngles}
-            />
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm text-zinc-400">
-                Paste a MovementDefinition to add a brand-new movement live — no
-                code, no reload.
-              </p>
-              <textarea
-                value={customJson}
-                onChange={(e) => setCustomJson(e.target.value)}
-                placeholder='{ "id": "...", "name": "...", "joints": [...], "cues": [...] }'
-                rows={8}
-                className="w-full rounded-lg bg-black/50 p-3 font-mono text-xs"
-              />
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={loadCustomMovement}
-                  className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500"
-                >
-                  Load &amp; activate
-                </button>
-                {customError && (
-                  <span className="text-sm text-red-400">{customError}</span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-zinc-900">
         <CameraView
@@ -319,6 +283,13 @@ export default function App() {
             {!detectorReady ? 'Loading pose model…' : 'Starting camera…'}
           </div>
         )}
+        {overlayMessage && (
+          <div className="absolute inset-x-0 top-4 flex justify-center">
+            <span className="rounded-full bg-black/70 px-4 py-2 text-lg font-semibold text-white">
+              {overlayMessage}
+            </span>
+          </div>
+        )}
         {error && (
           <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-red-400">
             {error}
@@ -326,16 +297,7 @@ export default function App() {
         )}
       </div>
 
-      {activeMovement && (
-        <FeedbackPanel
-          feedback={feedback}
-          movement={activeMovement}
-          onResetReps={() => {
-            trackerRef.current.reset();
-            setFeedback(null);
-          }}
-        />
-      )}
+      <FeedbackPanel feedback={feedback} movement={movement} onResetReps={() => {}} />
     </div>
   );
 }

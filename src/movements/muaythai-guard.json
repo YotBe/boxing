@@ -3,64 +3,54 @@
   "name": "Muay Thai Guard",
   "joints": [
     {
+      "id": "left_hand_height",
+      "label": "Left hand up",
+      "points": [23, 11, 15],
+      "targetMin": 110,
+      "targetMax": 180
+    },
+    {
+      "id": "right_hand_height",
+      "label": "Right hand up",
+      "points": [24, 12, 16],
+      "targetMin": 110,
+      "targetMax": 180
+    },
+    {
       "id": "left_elbow",
-      "label": "Left elbow",
+      "label": "Left arm bent",
       "points": [11, 13, 15],
-      "targetMin": 20,
-      "targetMax": 90
+      "targetMin": 10,
+      "targetMax": 95
     },
     {
       "id": "right_elbow",
-      "label": "Right elbow",
+      "label": "Right arm bent",
       "points": [12, 14, 16],
-      "targetMin": 20,
-      "targetMax": 90
-    },
-    {
-      "id": "left_shoulder",
-      "label": "Left arm height",
-      "points": [23, 11, 13],
-      "targetMin": 15,
-      "targetMax": 65
-    },
-    {
-      "id": "right_shoulder",
-      "label": "Right arm height",
-      "points": [24, 12, 14],
-      "targetMin": 15,
-      "targetMax": 65
+      "targetMin": 10,
+      "targetMax": 95
     }
   ],
   "cues": [
     {
+      "jointId": "left_hand_height",
+      "when": "below",
+      "cue": "Get your left hand up to your cheek."
+    },
+    {
+      "jointId": "right_hand_height",
+      "when": "below",
+      "cue": "Get your right hand up to your cheek."
+    },
+    {
       "jointId": "left_elbow",
       "when": "above",
-      "cue": "Bend your left arm — bring the glove to your cheek."
+      "cue": "Bend your left arm — keep the glove tight to your face."
     },
     {
       "jointId": "right_elbow",
       "when": "above",
-      "cue": "Bend your right arm — bring the glove to your cheek."
-    },
-    {
-      "jointId": "left_shoulder",
-      "when": "below",
-      "cue": "Get your left hand up by your face."
-    },
-    {
-      "jointId": "right_shoulder",
-      "when": "below",
-      "cue": "Get your right hand up by your face."
-    },
-    {
-      "jointId": "left_shoulder",
-      "when": "above",
-      "cue": "Tuck your left elbow in toward your ribs."
-    },
-    {
-      "jointId": "right_shoulder",
-      "when": "above",
-      "cue": "Tuck your right elbow in toward your ribs."
+      "cue": "Bend your right arm — keep the glove tight to your face."
     }
   ]
 }
