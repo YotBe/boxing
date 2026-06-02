@@ -88,6 +88,17 @@ The engine is also **robustness-aware**: landmarks are temporally smoothed
 threshold are marked unavailable — so stepping out of frame shows a neutral "step back" state
 instead of a false "wrong".
 
+## Calibration ("calibrate to me")
+
+Default angle ranges are generic. Hit **Calibrate to me** and hold your own correct pose — a
+3-2-1 countdown then a ~1s average reads your angles and sets the ranges for *your* body and
+camera. For dynamic movements it captures two ends of the rep to set the thresholds too.
+
+Crucially this changes **only the numbers**: calibration is pure math
+(`src/engine/calibration.ts`) that emits the same `JointAngleSpec` / `DynamicSpec` shapes the
+engine already consumes. A calibrated movement is just a `MovementDefinition` with your values —
+the engine and schema don't change. **Reset to defaults** restores the shipped numbers.
+
 ## Run it
 
 ```bash

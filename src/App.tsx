@@ -1,14 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import CalibrationOverlay from './components/CalibrationOverlay';
 import CameraView from './components/CameraView';
 import FeedbackPanel from './components/FeedbackPanel';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
+import {
+  calibrateDynamics,
+  calibrateJoints,
+  meanAngles,
+} from './engine/calibration';
 import { createDynamicTracker } from './engine/dynamics';
 import { evaluate } from './engine/evaluator';
 import { createPoseDetector, type PoseDetector } from './engine/poseDetector';
 import { createSmoother } from './engine/smoothing';
-import type { Feedback, MovementDefinition } from './engine/types';
+import type {
+  DynamicSpec,
+  Feedback,
+  JointAngleSpec,
+  JointResult,
+  MovementDefinition,
+} from './engine/types';
 import { movements as builtInMovements } from './movements';
 
 // How often to push feedback into React state (the skeleton is drawn every
@@ -16,6 +28,11 @@ import { movements as builtInMovements } from './movements';
 const PANEL_UPDATE_MS = 100;
 
 const REPO_URL = 'https://github.com/YotBe/boxing';
+
+/** A per-movement set of calibrated overrides (applied over the base data). */
+type Calibration = { joints?: JointAngleSpec[]; dynamics?: DynamicSpec };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function isMovementDefinition(value: unknown): value is MovementDefinition {
   if (typeof value !== 'object' || value === null) return false;
@@ -50,14 +67,34 @@ export default function App() {
   );
 
   const [activeId, setActiveId] = useState(builtInMovements[0]?.id ?? '');
-  const activeMovement =
+  const baseMovement =
     allMovements.find((m) => m.id === activeId) ?? allMovements[0];
+
+  // Calibrated overrides, keyed by movement id, applied over the base data so
+  // the engine evaluates against the user's own angles/thresholds.
+  const [calibrations, setCalibrations] = useState<Record<string, Calibration>>(
+    {},
+  );
+  const calibration = baseMovement ? calibrations[baseMovement.id] : undefined;
+  const activeMovement = useMemo<MovementDefinition | undefined>(
+    () => (calibration ? { ...baseMovement, ...calibration } : baseMovement),
+    [baseMovement, calibration],
+  );
 
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   const [customJson, setCustomJson] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
   const [showCustom, setShowCustom] = useState(false);
+
+  // Calibration session UI state + capture plumbing.
+  const [calibrating, setCalibrating] = useState(false);
+  const [calInstruction, setCalInstruction] = useState('');
+  const [calCountdown, setCalCountdown] = useState<number | null>(null);
+  const [calCapturing, setCalCapturing] = useState(false);
+  const capturingRef = useRef(false);
+  const sampleBufferRef = useRef<JointResult[][]>([]);
+  const cancelCalRef = useRef(false);
 
   // Keep the active movement available to the rAF loop without restarting it.
   const activeMovementRef = useRef(activeMovement);
@@ -125,6 +162,7 @@ export default function App() {
       }
 
       const movement = activeMovementRef.current;
+      if (!movement) return;
       const raw = result.landmarks[0];
       const smoothed = raw ? smootherRef.current.smooth(raw) : undefined;
 
@@ -138,6 +176,8 @@ export default function App() {
             movement.dynamics,
           );
         }
+        // Feed the calibration capture buffer when a capture window is open.
+        if (capturingRef.current) sampleBufferRef.current.push(fb.joints);
       }
 
       overlayRef.current?.draw(smoothed, fb, movement);
@@ -170,6 +210,97 @@ export default function App() {
       );
     }
   }
+
+  async function runCountdown(seconds: number) {
+    for (let n = seconds; n >= 1; n--) {
+      if (cancelCalRef.current) return;
+      setCalCountdown(n);
+      await sleep(1000);
+    }
+    setCalCountdown(null);
+  }
+
+  // Open a capture window, average the visible joint angles collected by the
+  // rAF loop, and return the per-joint means.
+  async function runCapture(ms: number): Promise<Map<string, number>> {
+    setCalCountdown(null);
+    setCalCapturing(true);
+    sampleBufferRef.current = [];
+    capturingRef.current = true;
+    await sleep(ms);
+    capturingRef.current = false;
+    setCalCapturing(false);
+    return meanAngles(sampleBufferRef.current);
+  }
+
+  function finishCalibration() {
+    capturingRef.current = false;
+    smootherRef.current.reset();
+    trackerRef.current.reset();
+    setFeedback(null);
+    setCalibrating(false);
+    setCalCapturing(false);
+    setCalCountdown(null);
+    setCalInstruction('');
+  }
+
+  async function startCalibration() {
+    const movement = baseMovement;
+    if (!movement) return;
+    cancelCalRef.current = false;
+    setCalibrating(true);
+    try {
+      if (!movement.dynamics) {
+        setCalInstruction(`Hold a correct ${movement.name}`);
+        await runCountdown(3);
+        if (cancelCalRef.current) return;
+        const means = await runCapture(1000);
+        setCalibrations((prev) => ({
+          ...prev,
+          [movement.id]: { joints: calibrateJoints(movement, means) },
+        }));
+      } else {
+        const dynamics = movement.dynamics;
+        setCalInstruction(`Hold the position to check — your best ${movement.name}`);
+        await runCountdown(3);
+        if (cancelCalRef.current) return;
+        const means1 = await runCapture(1000);
+        const angleA = means1.get(dynamics.trackJointId);
+
+        setCalInstruction('Now hold the opposite end of the movement');
+        await runCountdown(3);
+        if (cancelCalRef.current) return;
+        const means2 = await runCapture(1000);
+        const angleB = means2.get(dynamics.trackJointId);
+
+        const override: Calibration = { joints: calibrateJoints(movement, means1) };
+        if (angleA !== undefined && angleB !== undefined) {
+          override.dynamics = calibrateDynamics(dynamics, angleA, angleB);
+        }
+        setCalibrations((prev) => ({ ...prev, [movement.id]: override }));
+      }
+    } finally {
+      finishCalibration();
+    }
+  }
+
+  function cancelCalibration() {
+    cancelCalRef.current = true;
+  }
+
+  function resetCalibration() {
+    if (!baseMovement) return;
+    setCalibrations((prev) => {
+      const next = { ...prev };
+      delete next[baseMovement.id];
+      return next;
+    });
+    smootherRef.current.reset();
+    trackerRef.current.reset();
+    setFeedback(null);
+  }
+
+  const ready = cameraReady && detectorReady;
 
   return (
     <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4 p-4">
@@ -213,6 +344,26 @@ export default function App() {
         >
           {showCustom ? 'Hide custom JSON' : 'Load custom movement'}
         </button>
+        <button
+          type="button"
+          onClick={startCalibration}
+          disabled={!ready || calibrating}
+          className="rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold hover:bg-green-500 disabled:opacity-40"
+        >
+          Calibrate to me
+        </button>
+        {calibration && !calibrating && (
+          <span className="flex items-center gap-2 text-sm text-green-400">
+            Calibrated ✓
+            <button
+              type="button"
+              onClick={resetCalibration}
+              className="rounded-lg bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700"
+            >
+              Reset to defaults
+            </button>
+          </span>
+        )}
       </div>
 
       {showCustom && (
@@ -250,6 +401,13 @@ export default function App() {
           onError={setError}
         />
         <SkeletonOverlay ref={overlayRef} />
+        <CalibrationOverlay
+          active={calibrating}
+          instruction={calInstruction}
+          countdown={calCountdown}
+          capturing={calCapturing}
+          onCancel={cancelCalibration}
+        />
         {(!cameraReady || !detectorReady) && !error && (
           <div className="absolute inset-0 flex items-center justify-center text-zinc-400">
             {!detectorReady ? 'Loading pose model…' : 'Starting camera…'}
