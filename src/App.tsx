@@ -60,6 +60,13 @@ const COMBOS = [
   { name: 'Dutch Style (Jab-Cross-Teep-Knee)', sequence: ['jab', 'cross', 'teep', 'knee'] },
 ];
 
+const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
+  'jab': { index: 15, color: 'rgb(245, 158, 11)' }, // Left Wrist, Amber
+  'cross': { index: 16, color: 'rgb(245, 158, 11)' }, // Right Wrist, Amber
+  'knee': { index: 26, color: 'rgb(16, 185, 129)' }, // Right Knee, Emerald
+  'teep': { index: 27, color: 'rgb(99, 102, 241)' }, // Left Ankle, Indigo
+};
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<SkeletonOverlayHandle>(null);
@@ -87,6 +94,17 @@ export default function App() {
   const [combosCompletedCount, setCombosCompletedCount] = useState(0);
   const [comboStatus, setComboStatus] = useState<'idle' | 'calling' | 'waiting' | 'success'>('idle');
   const [comboFeedbackText, setComboFeedbackText] = useState('');
+
+  // Round Session states
+  const [roundModeActive, setRoundModeActive] = useState(false);
+  const [currentRound, setCurrentRound] = useState(1);
+  const [roundPhase, setRoundPhase] = useState<'work' | 'rest' | 'inactive'>('inactive');
+  const [roundTimeLeft, setRoundTimeLeft] = useState(0);
+
+  // Round Configurations
+  const [roundCount, setRoundCount] = useState(3);
+  const [roundDurationSec, setRoundDurationSec] = useState(120);
+  const [restDurationSec, setRestDurationSec] = useState(45);
 
   // Selected movement (only relevant in practice mode)
   const [selectedMovementId, setSelectedMovementId] = useState(() => {
@@ -237,32 +255,158 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handleUnload);
   }, [movement.id, movement.name, dynamicStats, workoutMode]);
 
+  // Round session timer tick state machine
+  useEffect(() => {
+    if (!roundModeActive) return;
+    const interval = setInterval(() => {
+      setRoundTimeLeft((prev) => {
+        if (prev <= 1) {
+          // Phase finished transition
+          if (roundPhase === 'work') {
+            if (currentRound >= roundCount) {
+              // Workout Session Complete
+              playBoxingBell(3);
+              setRoundModeActive(false);
+              setRoundPhase('inactive');
+              speakCue("Workout complete. Excellent job!");
+              return 0;
+            } else {
+              // End of Round work -> Rest
+              playBoxingBell(1);
+              setRoundPhase('rest');
+              speakCue("Round complete. Take a rest!");
+              return restDurationSec;
+            }
+          } else if (roundPhase === 'rest') {
+            // End of Rest -> Next Round work
+            playBoxingBell(2);
+            setCurrentRound((r) => r + 1);
+            setRoundPhase('work');
+            speakCue(`Round ${currentRound + 1}! Fight!`);
+            return roundDurationSec;
+          }
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [roundModeActive, roundPhase, currentRound, roundCount, roundDurationSec, restDurationSec]);
+
+  // Start / stop round workouts
+  function handleToggleRoundSession() {
+    if (roundModeActive) {
+      // Terminate workout
+      playBoxingBell(3);
+      setRoundModeActive(false);
+      setRoundPhase('inactive');
+      speakCue("Training session stopped.");
+    } else {
+      // Initialize workout
+      playBoxingBell(2);
+      setCurrentRound(1);
+      setRoundPhase('work');
+      setRoundTimeLeft(roundDurationSec);
+      setRoundModeActive(true);
+      speakCue("Workout started. Round 1! Fight!");
+      
+      // If in combo mode, trigger first combo
+      if (workoutMode === 'combos') {
+        startNextCombo(0);
+      }
+    }
+  }
+
   function clearTimers() {
     timersRef.current.forEach((id) => window.clearTimeout(id));
     timersRef.current.forEach((id) => window.clearInterval(id));
     timersRef.current = [];
   }
 
-  // Play single strike hit sound
-  function playHitSound() {
+  // Play boxing ring bell
+  function playBoxingBell(times = 1) {
     if (!soundEnabled) return;
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
       
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(150, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.12);
+      const triggerBell = (delay: number) => {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(450, ctx.currentTime + delay);
+        
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(680, ctx.currentTime + delay);
+        
+        gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+        gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + delay + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.85);
+        
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc1.start(ctx.currentTime + delay);
+        osc2.start(ctx.currentTime + delay);
+        osc1.stop(ctx.currentTime + delay + 0.85);
+        osc2.stop(ctx.currentTime + delay + 0.85);
+      };
+
+      for (let i = 0; i < times; i++) {
+        triggerBell(i * 0.35); // repeat bell delays
+      }
+    } catch (e) {}
+  }
+
+  // Programmatic Leather Pad Hit Synthesizer (White noise slap + Triangle low sweep thump)
+  function playLeatherPadHit() {
+    if (!soundEnabled) return;
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      // 1. Low Thump (Triangle sweep)
+      const thumpOsc = ctx.createOscillator();
+      const thumpGain = ctx.createGain();
+      thumpOsc.type = 'triangle';
+      thumpOsc.frequency.setValueAtTime(160, ctx.currentTime);
+      thumpOsc.frequency.exponentialRampToValueAtTime(45, ctx.currentTime + 0.1);
       
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      thumpGain.gain.setValueAtTime(0.4, ctx.currentTime);
+      thumpGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+      thumpOsc.connect(thumpGain);
+      thumpGain.connect(ctx.destination);
       
-      osc.start();
-      osc.stop(ctx.currentTime + 0.12);
+      // 2. High Slap (White Noise)
+      const bufferSize = ctx.sampleRate * 0.05; // 50ms slap
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      
+      const noiseSource = ctx.createBufferSource();
+      noiseSource.buffer = buffer;
+      
+      // Filter for tight leather hit timbre
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1100, ctx.currentTime);
+      filter.Q.setValueAtTime(1.5, ctx.currentTime);
+      
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.28, ctx.currentTime);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+      
+      noiseSource.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+      
+      thumpOsc.start();
+      noiseSource.start();
+      
+      thumpOsc.stop(ctx.currentTime + 0.1);
+      noiseSource.stop(ctx.currentTime + 0.05);
     } catch (e) {}
   }
 
@@ -295,31 +439,6 @@ export default function App() {
       osc1.stop(ctx.currentTime + 0.25);
       osc2.stop(ctx.currentTime + 0.25);
     } catch (e) {}
-  }
-
-  // Play standard chime
-  function playBeep() {
-    if (!soundEnabled) return;
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(660, ctx.currentTime); // E5 note
-      
-      gain.gain.setValueAtTime(0, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-      
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      
-      osc.start();
-      osc.stop(ctx.currentTime + 0.25);
-    } catch (err) {
-      console.warn('AudioContext failed:', err);
-    }
   }
 
   // Speak correctional cues
@@ -421,7 +540,9 @@ export default function App() {
         fb = evaluate(forEval, current);
       }
 
-      if (fb) {
+      const inRestPhase = roundModeActive && roundPhase === 'rest';
+
+      if (fb && !inRestPhase) {
         if (capturingRef.current) calibratorRef.current?.add(fb.joints);
 
         // --- PRACTICE MODE ---
@@ -437,8 +558,15 @@ export default function App() {
             fb.dynamic = dynResult;
             
             if (dynResult.reps > lastRepsCountRef.current) {
-              playBeep();
+              // Play authentic leather clap sound
+              playLeatherPadHit();
               lastRepsCountRef.current = dynResult.reps;
+              
+              // Trigger visual splash on skeleton canvas
+              const fx = STRIKE_FX_MAP[current.id];
+              if (fx) {
+                overlayRef.current?.triggerSplash(fx.index, fx.color);
+              }
             }
           }
 
@@ -482,9 +610,15 @@ export default function App() {
             fb.dynamic = dynResult;
 
             if (dynResult.reps > lastRepsCountRef.current) {
-              // Target strike detected successfully!
-              playHitSound();
+              // Target strike landed successfully!
+              playLeatherPadHit();
               lastRepsCountRef.current = dynResult.reps;
+              
+              // Draw visual glowing concentric shockwave on striking limb
+              const fx = STRIKE_FX_MAP[expectedStrikeId];
+              if (fx) {
+                overlayRef.current?.triggerSplash(fx.index, fx.color);
+              }
               
               const nextStep = comboStepIndex + 1;
               if (nextStep < combo.sequence.length) {
@@ -493,11 +627,11 @@ export default function App() {
                 trackersRef.current[nextStrikeId]?.reset();
                 lastRepsCountRef.current = 0;
                 
-                // Call out upcoming strike
+                // Prompt next strike in combination
                 const strikeLabel = movements.find(m => m.id === nextStrikeId)?.name ?? nextStrikeId;
                 speakComboStrike(strikeLabel);
               } else {
-                // Combo completed
+                // Combination fully completed
                 playComboSuccessSound();
                 setComboStatus('success');
                 setCombosCompletedCount((prev) => prev + 1);
@@ -506,7 +640,7 @@ export default function App() {
                 const randomEncouragement = encouragements[Math.floor(Math.random() * encouragements.length)];
                 setComboFeedbackText(randomEncouragement);
                 
-                // Save combo accomplishment to history log
+                // Write combo to workout logs
                 logComboToHistory(combo.name);
                 
                 const nextComboTimeout = window.setTimeout(() => {
@@ -542,7 +676,7 @@ export default function App() {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [cameraReady, detectorReady, workoutMode, comboStatus, activeComboIndex, comboStepIndex]);
+  }, [cameraReady, detectorReady, workoutMode, comboStatus, activeComboIndex, comboStepIndex, roundModeActive, roundPhase]);
 
   // Set up next pad combo strike sequence
   function startNextCombo(forceIndex?: number) {
@@ -671,6 +805,13 @@ export default function App() {
         ? 'HOLDING STILL...'
         : null;
 
+  // Format seconds to mm:ss
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-8">
       {/* Header section with Glass design */}
@@ -708,8 +849,25 @@ export default function App() {
             />
             <SkeletonOverlay ref={overlayRef} />
             
+            {/* Rounds Rest Phase Overlay Screen */}
+            {roundModeActive && roundPhase === 'rest' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-md transition-all duration-300 select-none">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1 rounded-full">
+                    REST & BREATHE
+                  </span>
+                  <span className="text-6xl font-black text-white tracking-tight tabular-nums font-mono animate-pulse">
+                    {formatTime(roundTimeLeft)}
+                  </span>
+                  <span className="text-xs text-zinc-400 font-medium">
+                    Next Round: {currentRound + 1} of {roundCount}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Combo Padwork Overlays inside Camera View */}
-            {workoutMode === 'combos' && comboStatus === 'waiting' && (
+            {workoutMode === 'combos' && comboStatus === 'waiting' && (!roundModeActive || roundPhase === 'work') && (
               <div className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-1 pointer-events-none select-none">
                 <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full backdrop-blur-sm">
                   STRIKE TARGET
@@ -742,7 +900,7 @@ export default function App() {
             )}
 
             {/* Combo hit flash success */}
-            {workoutMode === 'combos' && comboStatus === 'success' && (
+            {workoutMode === 'combos' && comboStatus === 'success' && (!roundModeActive || roundPhase === 'work') && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-emerald-950/30 backdrop-blur-sm pointer-events-none select-none transition-all duration-300">
                 <div className="flex flex-col items-center gap-1 text-center animate-bounce">
                   <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/20 border border-emerald-500/35 px-4 py-1 rounded-full">
@@ -779,7 +937,7 @@ export default function App() {
                     {overlayMessage}
                   </span>
                   <span className="text-xs text-zinc-300 font-semibold tracking-wide">
-                    {calibUi.phase === 'countdown' ? 'Get into pose stance...' : 'Observing stance limits...'}
+                    {calibUi.phase === 'countdown' ? 'Get ready and strike stance...' : 'Observing stance limits...'}
                   </span>
                 </div>
               </div>
@@ -891,6 +1049,19 @@ export default function App() {
             comboFeedbackText={comboFeedbackText}
             startNextCombo={startNextCombo}
             COMBOS={COMBOS}
+            
+            // Round structures
+            roundModeActive={roundModeActive}
+            currentRound={currentRound}
+            roundPhase={roundPhase}
+            roundTimeLeft={roundTimeLeft}
+            roundCount={roundCount}
+            setRoundCount={setRoundCount}
+            roundDurationSec={roundDurationSec}
+            setRoundDurationSec={setRoundDurationSec}
+            restDurationSec={restDurationSec}
+            setRestDurationSec={setRestDurationSec}
+            onToggleRoundSession={handleToggleRoundSession}
           />
         </div>
       </div>
