@@ -21,6 +21,15 @@ export interface SkeletonOverlayHandle {
     movement: MovementDefinition,
   ): void;
   clear(): void;
+  /** Trigger a glowing rings shockwave at the specified joint landmark. */
+  triggerSplash(landmarkIndex: number, color: string): void;
+}
+
+interface HitSplash {
+  x: number;
+  y: number;
+  startTime: number;
+  color: string;
 }
 
 /**
@@ -33,6 +42,9 @@ export interface SkeletonOverlayHandle {
 const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const utilsRef = useRef<DrawingUtils | null>(null);
+
+  const lastLandmarksRef = useRef<Landmark[] | undefined>(undefined);
+  const splashesRef = useRef<HitSplash[]>([]);
 
   function ctx(): CanvasRenderingContext2D | null {
     const canvas = canvasRef.current;
@@ -56,6 +68,18 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
       const canvas = canvasRef.current;
       if (c && canvas) c.clearRect(0, 0, canvas.width, canvas.height);
     },
+    triggerSplash(landmarkIndex, color) {
+      if (!lastLandmarksRef.current) return;
+      const landmark = lastLandmarksRef.current[landmarkIndex];
+      if (landmark) {
+        splashesRef.current.push({
+          x: landmark.x,
+          y: landmark.y,
+          startTime: performance.now(),
+          color,
+        });
+      }
+    },
     draw(landmarks, feedback, movement) {
       const c = ctx();
       const canvas = canvasRef.current;
@@ -63,6 +87,10 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
       if (!c || !canvas || !utils) return;
 
       c.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Save current landmarks for splash coordinates lookup
+      lastLandmarksRef.current = landmarks;
+      
       if (!landmarks || landmarks.length === 0) return;
 
       // DrawingUtils types z as required; at runtime it's always present.
@@ -78,6 +106,7 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
         (l) => (l.visibility ?? 1) < VISIBILITY_THRESHOLD,
       );
 
+      // Draw skeleton skeleton lines
       utils.drawConnectors(
         asDrawable(landmarks),
         PoseLandmarker.POSE_CONNECTIONS,
@@ -90,6 +119,30 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
           radius: 2,
         });
       }
+
+      // Draw active visual hit shockwaves
+      const now = performance.now();
+      splashesRef.current = splashesRef.current.filter((s) => now - s.startTime < 350);
+      splashesRef.current.forEach((s) => {
+        const elapsed = now - s.startTime;
+        const progress = elapsed / 350;
+        const radius = 12 + progress * 48; // expanding ring
+        const opacity = 1 - progress;
+        
+        c.save();
+        c.beginPath();
+        c.arc(s.x * canvas.width, s.y * canvas.height, radius, 0, Math.PI * 2);
+        c.strokeStyle = s.color;
+        c.lineWidth = 4 * (1 - progress);
+        c.stroke();
+        
+        c.beginPath();
+        c.arc(s.x * canvas.width, s.y * canvas.height, radius * 0.6, 0, Math.PI * 2);
+        // Replace base RGB with opacity mapping for visual glow fill
+        c.fillStyle = s.color.replace('rgb', 'rgba').replace(')', `, ${opacity * 0.25})`);
+        c.fill();
+        c.restore();
+      });
 
       // Highlight the vertex of each out-of-range (and visible) joint in red.
       if (feedback) {
@@ -115,7 +168,7 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
   return (
     <canvas
       ref={canvasRef}
-      className="absolute inset-0 h-full w-full object-cover"
+      className="absolute inset-0 h-full w-full object-cover pointer-events-none"
       style={{ transform: 'scaleX(-1)' }}
     />
   );

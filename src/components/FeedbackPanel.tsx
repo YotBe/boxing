@@ -34,6 +34,19 @@ interface FeedbackPanelProps {
   comboFeedbackText: string;
   startNextCombo: (idx?: number) => void;
   COMBOS: { name: string; sequence: string[] }[];
+
+  // Rounds Workout Additions
+  roundModeActive: boolean;
+  currentRound: number;
+  roundPhase: 'work' | 'rest' | 'inactive';
+  roundTimeLeft: number;
+  roundCount: number;
+  setRoundCount: (c: number) => void;
+  roundDurationSec: number;
+  setRoundDurationSec: (d: number) => void;
+  restDurationSec: number;
+  setRestDurationSec: (r: number) => void;
+  onToggleRoundSession: () => void;
 }
 
 interface AngleProgressBarProps {
@@ -111,9 +124,19 @@ export default function FeedbackPanel({
   comboFeedbackText: _comboFeedbackText,
   startNextCombo,
   COMBOS,
+
+  roundModeActive,
+  currentRound,
+  roundPhase,
+  roundTimeLeft,
+  roundCount,
+  setRoundCount,
+  roundDurationSec,
+  setRoundDurationSec,
+  restDurationSec,
+  setRestDurationSec,
+  onToggleRoundSession,
 }: FeedbackPanelProps) {
-  const cue = feedback?.activeCues?.[0];
-  
   const getStrikeName = (id: string) => {
     if (id === 'jab') return 'Left Jab';
     if (id === 'cross') return 'Right Cross';
@@ -122,9 +145,17 @@ export default function FeedbackPanel({
     return id;
   };
 
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const cue = feedback?.activeCues?.[0];
+
   return (
     <div className="flex flex-col gap-5">
-      {/* Tab Selector Mode */}
+      {/* Mode Selector Tabs */}
       <div className="flex rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-1.5 shadow-md">
         <button
           type="button"
@@ -145,16 +176,119 @@ export default function FeedbackPanel({
           }}
           className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
             workoutMode === 'combos'
-              ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white shadow shadow-amber-600/10'
+              ? 'bg-gradient-to-r from-red-600 to-red-700 text-white shadow shadow-red-600/10'
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping" />
+          <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-ping" />
           Combo Coach (Pad Work)
         </button>
       </div>
 
-      {/* --- COMBO COACH MODE SIDEBAR PANEL --- */}
+      {/* --- ROUNDS WORKOUT TIMER CARD --- */}
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
+        <div className="absolute right-0 top-0 w-32 h-32 bg-red-600/5 rounded-full filter blur-2xl pointer-events-none" />
+        
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Workout Flow</span>
+            <h3 className="text-sm font-bold text-zinc-200 mt-0.5">Muay Thai Round Timer</h3>
+          </div>
+          {roundModeActive && (
+            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
+              roundPhase === 'work'
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'
+                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+            }`}>
+              {roundPhase === 'work' ? 'FIGHTING' : 'REST PHASE'}
+            </span>
+          )}
+        </div>
+
+        {!roundModeActive ? (
+          /* Timer Settings Configuration Panel */
+          <div className="flex flex-col gap-3.5">
+            <div className="grid grid-cols-3 gap-2.5">
+              {/* Rounds config */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rounds</span>
+                <select
+                  value={roundCount}
+                  onChange={(e) => setRoundCount(Number(e.target.value))}
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                >
+                  {[1, 2, 3, 4, 5].map((r) => (
+                    <option key={r} value={r}>{r} Rnd</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Work duration config */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Work Time</span>
+                <select
+                  value={roundDurationSec}
+                  onChange={(e) => setRoundDurationSec(Number(e.target.value))}
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                >
+                  <option value={30}>30s</option>
+                  <option value={60}>1:00</option>
+                  <option value={90}>1:30</option>
+                  <option value={120}>2:00</option>
+                  <option value={180}>3:00</option>
+                </select>
+              </div>
+
+              {/* Rest duration config */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rest Time</span>
+                <select
+                  value={restDurationSec}
+                  onChange={(e) => setRestDurationSec(Number(e.target.value))}
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                >
+                  <option value={15}>15s</option>
+                  <option value={30}>30s</option>
+                  <option value={45}>45s</option>
+                  <option value={60}>1:00</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onToggleRoundSession}
+              className="w-full rounded-xl bg-gradient-to-r from-red-600 to-red-700 py-2.5 text-xs font-bold text-white hover:from-red-500 hover:to-red-600 transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-[0.98]"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+              </svg>
+              Start Muay Thai Session
+            </button>
+          </div>
+        ) : (
+          /* Live Active Timer Display Panel */
+          <div className="flex items-center justify-between bg-zinc-950/40 border border-zinc-800/80 rounded-xl p-3.5 shadow-inner">
+            <div className="flex flex-col">
+              <span className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider font-mono">
+                Round {currentRound} of {roundCount}
+              </span>
+              <span className="text-3xl font-black text-white tabular-nums font-mono mt-0.5">
+                {formatTime(roundTimeLeft)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onToggleRoundSession}
+              className="rounded-xl bg-red-600/10 border border-red-500/30 hover:bg-red-600/25 px-4.5 py-2.5 text-xs font-bold text-red-400 transition-all active:scale-[0.96]"
+            >
+              Stop Workout
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* --- COMBO COACH (PAD WORK) VIEW PANEL --- */}
       {workoutMode === 'combos' && (
         <>
           {/* Active Combo Progress */}
@@ -166,7 +300,7 @@ export default function FeedbackPanel({
               {COMBOS[activeComboIndex]?.name}
             </h3>
 
-            {/* Strike Progression list */}
+            {/* Strike list sequence */}
             <div className="mt-4 flex flex-col gap-2">
               {COMBOS[activeComboIndex]?.sequence.map((strikeId, i) => {
                 const isPassed = i < comboStepIndex;
@@ -212,8 +346,8 @@ export default function FeedbackPanel({
             </div>
           </div>
 
-          {/* Audio Toggles for Combo Mode */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
+          {/* Audio controls */}
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
             <div className="grid grid-cols-2 gap-3 mt-3">
               <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
@@ -238,7 +372,7 @@ export default function FeedbackPanel({
             </div>
           </div>
 
-          {/* Combos Selection Grid */}
+          {/* Pad Combos Selection Grid */}
           <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Pad Training Schedule</span>
             <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Available Combos</h3>
@@ -252,7 +386,7 @@ export default function FeedbackPanel({
                     onClick={() => startNextCombo(idx)}
                     className={`text-left rounded-xl p-3 border transition-all text-xs flex flex-col justify-between ${
                       isActive
-                        ? 'bg-amber-600/10 border-amber-500/40 text-amber-300'
+                        ? 'bg-amber-600/10 border-amber-500/40 text-amber-300 shadow-md shadow-amber-500/5'
                         : 'bg-zinc-950/30 border-zinc-900/60 text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/40 hover:text-zinc-200'
                     }`}
                   >
@@ -271,7 +405,7 @@ export default function FeedbackPanel({
       {/* --- SINGLE PRACTICE MODE PANEL --- */}
       {workoutMode === 'practice' && (
         <>
-          {/* Form Status Card */}
+          {/* Stance Feedback Verdict */}
           {feedback && (
             <div
               className={`rounded-2xl p-5 border transition-all duration-300 shadow-lg ${
@@ -313,7 +447,7 @@ export default function FeedbackPanel({
             </div>
           )}
 
-          {/* Interactive Counters & Audio for Single Practice */}
+          {/* Practice stats & audio */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
               <div className="absolute right-0 top-0 w-32 h-32 bg-violet-600/10 rounded-full filter blur-2xl pointer-events-none" />
@@ -371,7 +505,7 @@ export default function FeedbackPanel({
               </button>
             </div>
 
-            {/* Audio Settings */}
+            {/* Audio Assistant */}
             <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
               <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-600/10 rounded-full filter blur-2xl pointer-events-none" />
               <div>
@@ -382,11 +516,9 @@ export default function FeedbackPanel({
 
               <div className="mt-4 flex flex-col gap-3">
                 <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
-                      <span className="text-[10px] text-zinc-500">Speak form corrections</span>
-                    </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
+                    <span className="text-[10px] text-zinc-500">Speak form corrections</span>
                   </div>
                   <input
                     type="checkbox"
@@ -397,11 +529,9 @@ export default function FeedbackPanel({
                 </label>
 
                 <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-semibold text-zinc-300">Hit Chimes</span>
-                      <span className="text-[10px] text-zinc-500">Sound on clean strikes</span>
-                    </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-zinc-300">Hit Chimes</span>
+                    <span className="text-[10px] text-zinc-500">Sound on clean strikes</span>
                   </div>
                   <input
                     type="checkbox"
@@ -440,7 +570,7 @@ export default function FeedbackPanel({
         </>
       )}
 
-      {/* --- WORKOUT SESSION LOGS (SHARED BY BOTH MODES) --- */}
+      {/* --- WORKOUT LOG HISTORY (SHARED) --- */}
       <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg flex flex-col gap-3">
         <div className="flex justify-between items-center">
           <div>
