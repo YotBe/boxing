@@ -13,8 +13,6 @@ interface WorkoutLog {
 interface FeedbackPanelProps {
   feedback: Feedback | null;
   movement: MovementDefinition;
-  liveHoldTime: number;
-  dynamicStats: any; // DynamicResult | null
   voiceEnabled: boolean;
   soundEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;
@@ -47,6 +45,16 @@ interface FeedbackPanelProps {
   restDurationSec: number;
   setRestDurationSec: (r: number) => void;
   onToggleRoundSession: () => void;
+  roundTimerPaused: boolean;
+  onTogglePauseRoundSession: () => void;
+}
+
+interface FormVerdictPanelProps {
+  feedback: Feedback | null;
+  movement: MovementDefinition;
+  liveHoldTime: number;
+  dynamicStats: any; // DynamicResult | null
+  workoutMode: 'practice' | 'combos';
 }
 
 interface AngleProgressBarProps {
@@ -61,7 +69,7 @@ interface AngleProgressBarProps {
 function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleProgressBarProps) {
   if (!available || Number.isNaN(angle)) {
     return (
-      <div className="flex flex-col gap-1 rounded-xl bg-zinc-900/30 p-3 border border-zinc-800/40">
+      <div className="flex flex-col gap-1 rounded-xl bg-zinc-900/35 p-3 border border-zinc-800/40">
         <div className="flex justify-between items-center text-xs">
           <span className="text-zinc-500 font-semibold">{label}</span>
           <span className="text-zinc-600 font-mono text-[10px] uppercase tracking-wider">Out of Frame</span>
@@ -101,11 +109,166 @@ function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleP
   );
 }
 
-export default function FeedbackPanel({
+/**
+ * FormVerdictPanel: Displays live visual pose evaluation (form checks, cues, 
+ * joint angle sliders, activity reps/holds). Placed directly under the Camera View.
+ */
+export function FormVerdictPanel({
   feedback,
   movement,
   liveHoldTime,
   dynamicStats,
+  workoutMode,
+}: FormVerdictPanelProps) {
+  if (!feedback) {
+    return (
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 backdrop-blur-md p-6 text-center text-zinc-400 shadow-xl select-none">
+        <svg className="mx-auto h-7 w-7 text-zinc-600 mb-2 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+        <span className="font-semibold text-xs text-zinc-500 tracking-wide">Camera stream ready. Position your body in the view box to start coach analysis.</span>
+      </div>
+    );
+  }
+
+  if (!feedback.tracked) {
+    return (
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/40 backdrop-blur-md p-5 shadow-xl text-center select-none">
+        <div className="text-sm font-bold text-zinc-300 flex items-center justify-center gap-2">
+          <svg className="h-4 w-4 text-zinc-500 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          Searching for user joints...
+        </div>
+        <p className="mt-1.5 text-zinc-500 text-xs font-medium">
+          Step backward. Make sure shoulders, elbows, hips and knees are visible.
+        </p>
+      </div>
+    );
+  }
+
+  const cue = feedback.activeCues[0];
+  const isPractice = workoutMode === 'practice';
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Form Status Card */}
+      <div
+        className={`rounded-2xl p-5 border transition-all duration-300 shadow-md ${
+          feedback.ok
+            ? 'bg-emerald-950/20 border-emerald-500/30 ring-1 ring-emerald-500/10'
+            : 'bg-rose-950/20 border-rose-500/30 ring-1 ring-rose-500/10'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          {feedback.ok ? (
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 shrink-0">
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+            </div>
+          ) : (
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 animate-pulse shrink-0">
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </div>
+          )}
+          <div>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Real-Time Form Assessor</span>
+            <h2 className={`text-lg font-extrabold tracking-tight ${feedback.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {feedback.ok ? `Good ${movement.name} Stance` : 'Posture Adjustment Required'}
+            </h2>
+          </div>
+        </div>
+
+        {!feedback.ok && cue && isPractice && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3 border border-rose-500/20 text-xs font-semibold text-rose-200 animate-pulse">
+            <svg className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>{cue}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Activity Stats for Practice Mode */}
+      {isPractice && (
+        <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 flex items-center justify-between shadow-md">
+          <div>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Activity Stats</span>
+            {movement.dynamics ? (
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {dynamicStats?.reps ?? 0}
+                </span>
+                <span className="text-zinc-400 text-xs font-medium">strikes thrown</span>
+              </div>
+            ) : (
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {liveHoldTime}s
+                </span>
+                <span className="text-zinc-400 text-xs font-medium">guard hold duration</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1 text-right text-xs border-l border-zinc-800/60 pl-4">
+            {movement.dynamics ? (
+              <>
+                <div className="flex justify-between gap-4">
+                  <span className="text-zinc-500">Phase:</span>
+                  <span className="font-semibold text-zinc-200 uppercase">{dynamicStats?.phase ?? 'unknown'}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-zinc-500">Top Speed:</span>
+                  <span className="font-semibold font-mono text-zinc-200">{dynamicStats?.peakVelocityDegPerSec ? `${Math.round(dynamicStats.peakVelocityDegPerSec)}°/s` : '0°/s'}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between gap-4">
+                <span className="text-zinc-500">Status:</span>
+                <span className={`font-semibold ${feedback.ok ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                  {feedback.ok ? 'Holding' : 'Relaxed'}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Joint Sliders List */}
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
+        <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Joint Assessment Angles</span>
+        <h3 className="text-xs font-bold text-zinc-300 mt-0.5 mb-3">Live Posture Angles</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {feedback.joints.map((j) => {
+            const spec = movement.joints.find((s) => s.id === j.id);
+            return (
+              <AngleProgressBar
+                key={j.id}
+                label={spec?.label ?? j.id}
+                angle={j.angle}
+                min={spec?.targetMin ?? 0}
+                max={spec?.targetMax ?? 180}
+                inRange={j.inRange}
+                available={j.available}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * FeedbackPanel: Contains configuration, tab controls, rounds trainer controls, 
+ * audio toggles, pad combos database, and historical workout stats. Placed in the right column.
+ */
+export default function FeedbackPanel({
   voiceEnabled,
   soundEnabled,
   setVoiceEnabled,
@@ -136,6 +299,8 @@ export default function FeedbackPanel({
   restDurationSec,
   setRestDurationSec,
   onToggleRoundSession,
+  roundTimerPaused,
+  onTogglePauseRoundSession,
 }: FeedbackPanelProps) {
   const getStrikeName = (id: string) => {
     if (id === 'jab') return 'Left Jab';
@@ -151,16 +316,14 @@ export default function FeedbackPanel({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const cue = feedback?.activeCues?.[0];
-
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 text-zinc-300">
       {/* Mode Selector Tabs */}
       <div className="flex rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-1.5 shadow-md">
         <button
           type="button"
           onClick={() => setWorkoutMode('practice')}
-          className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all ${
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${
             workoutMode === 'practice'
               ? 'bg-zinc-900 text-white shadow'
               : 'text-zinc-400 hover:text-zinc-200'
@@ -174,7 +337,7 @@ export default function FeedbackPanel({
             setWorkoutMode('combos');
             startNextCombo(0);
           }}
-          className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
             workoutMode === 'combos'
               ? 'bg-gradient-to-r from-red-600 to-red-700 text-white shadow shadow-red-600/10'
               : 'text-zinc-400 hover:text-zinc-200'
@@ -185,7 +348,7 @@ export default function FeedbackPanel({
         </button>
       </div>
 
-      {/* --- ROUNDS WORKOUT TIMER CARD --- */}
+      {/* --- BOXING ROUNDS TIMER CARD --- */}
       <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
         <div className="absolute right-0 top-0 w-32 h-32 bg-red-600/5 rounded-full filter blur-2xl pointer-events-none" />
         
@@ -209,7 +372,6 @@ export default function FeedbackPanel({
           /* Timer Settings Configuration Panel */
           <div className="flex flex-col gap-3.5">
             <div className="grid grid-cols-3 gap-2.5">
-              {/* Rounds config */}
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rounds</span>
                 <select
@@ -218,12 +380,11 @@ export default function FeedbackPanel({
                   className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
                 >
                   {[1, 2, 3, 4, 5].map((r) => (
-                    <option key={r} value={r}>{r} Rnd</option>
+                    <option key={r} value={r}>{r} Rnds</option>
                   ))}
                 </select>
               </div>
 
-              {/* Work duration config */}
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-semibold text-zinc-500 uppercase">Work Time</span>
                 <select
@@ -239,7 +400,6 @@ export default function FeedbackPanel({
                 </select>
               </div>
 
-              {/* Rest duration config */}
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rest Time</span>
                 <select
@@ -267,28 +427,43 @@ export default function FeedbackPanel({
             </button>
           </div>
         ) : (
-          /* Live Active Timer Display Panel */
-          <div className="flex items-center justify-between bg-zinc-950/40 border border-zinc-800/80 rounded-xl p-3.5 shadow-inner">
-            <div className="flex flex-col">
-              <span className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider font-mono">
-                Round {currentRound} of {roundCount}
-              </span>
-              <span className="text-3xl font-black text-white tabular-nums font-mono mt-0.5">
-                {formatTime(roundTimeLeft)}
-              </span>
+          /* Live Active Timer Display Panel with Pause Button */
+          <div className="flex flex-col gap-3 bg-zinc-950/40 border border-zinc-800/80 rounded-xl p-3.5 shadow-inner">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider font-mono">
+                  Round {currentRound} of {roundCount} {roundTimerPaused && '(Paused)'}
+                </span>
+                <span className={`text-3xl font-black font-mono mt-0.5 tabular-nums ${roundTimerPaused ? 'text-zinc-500 animate-pulse' : 'text-white'}`}>
+                  {formatTime(roundTimeLeft)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleRoundSession}
+                className="rounded-xl bg-red-600/10 border border-red-500/30 hover:bg-red-600/25 px-4.5 py-2 text-xs font-bold text-red-400 transition-all active:scale-[0.96]"
+              >
+                Stop Session
+              </button>
             </div>
+            
+            {/* Pause / Resume button */}
             <button
               type="button"
-              onClick={onToggleRoundSession}
-              className="rounded-xl bg-red-600/10 border border-red-500/30 hover:bg-red-600/25 px-4.5 py-2.5 text-xs font-bold text-red-400 transition-all active:scale-[0.96]"
+              onClick={onTogglePauseRoundSession}
+              className={`w-full rounded-lg border py-1.5 text-xs font-bold transition-all active:scale-[0.98] ${
+                roundTimerPaused
+                  ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-zinc-850 border-zinc-700 text-zinc-300 hover:bg-zinc-800'
+              }`}
             >
-              Stop Workout
+              {roundTimerPaused ? 'Resume Round' : 'Pause Round'}
             </button>
           </div>
         )}
       </div>
 
-      {/* --- COMBO COACH (PAD WORK) VIEW PANEL --- */}
+      {/* --- COMBO TARGET DETAILS --- */}
       {workoutMode === 'combos' && (
         <>
           {/* Active Combo Progress */}
@@ -346,33 +521,7 @@ export default function FeedbackPanel({
             </div>
           </div>
 
-          {/* Audio controls */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                <span className="text-xs font-semibold text-zinc-300">Trainer Voice</span>
-                <input
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4"
-                />
-              </label>
-
-              <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                <span className="text-xs font-semibold text-zinc-300">Target Chimes</span>
-                <input
-                  type="checkbox"
-                  checked={soundEnabled}
-                  onChange={(e) => setSoundEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Pad Combos Selection Grid */}
+          {/* Combos selection list */}
           <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Pad Training Schedule</span>
             <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Available Combos</h3>
@@ -402,175 +551,44 @@ export default function FeedbackPanel({
         </>
       )}
 
-      {/* --- SINGLE PRACTICE MODE PANEL --- */}
+      {/* Audio controls */}
+      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
+        <div className="grid grid-cols-2 gap-3 mt-3">
+          <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+            <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
+            <input
+              type="checkbox"
+              checked={voiceEnabled}
+              onChange={(e) => setVoiceEnabled(e.target.checked)}
+              className="rounded text-red-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+            />
+          </label>
+
+          <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+            <span className="text-xs font-semibold text-zinc-300">Tone Beeps</span>
+            <input
+              type="checkbox"
+              checked={soundEnabled}
+              onChange={(e) => setSoundEnabled(e.target.checked)}
+              className="rounded text-red-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* --- RESET HANDLER FOR PRACTICE MODE --- */}
       {workoutMode === 'practice' && (
-        <>
-          {/* Stance Feedback Verdict */}
-          {feedback && (
-            <div
-              className={`rounded-2xl p-5 border transition-all duration-300 shadow-lg ${
-                feedback.ok
-                  ? 'bg-emerald-950/20 border-emerald-500/30 ring-1 ring-emerald-500/10'
-                  : 'bg-rose-950/20 border-rose-500/30 ring-1 ring-rose-500/10'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                {feedback.ok ? (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                ) : (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 animate-pulse">
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                )}
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Practice Form</span>
-                  <h2 className={`text-xl font-extrabold tracking-tight ${feedback.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {feedback.ok ? `Good ${movement.name}` : 'Form Adjustment'}
-                  </h2>
-                </div>
-              </div>
-
-              {!feedback.ok && cue && (
-                <div className="mt-3 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3.5 border border-rose-500/20 text-sm font-semibold text-rose-200 animate-pulse">
-                  <svg className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>{cue}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Practice stats & audio */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-32 h-32 bg-violet-600/10 rounded-full filter blur-2xl pointer-events-none" />
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Activity Stats</span>
-                {movement.dynamics ? (
-                  <div className="mt-2 flex items-baseline gap-4">
-                    <span className="text-5xl font-black text-white tracking-tight tabular-nums">
-                      {dynamicStats?.reps ?? 0}
-                    </span>
-                    <span className="text-zinc-400 text-sm font-medium">strikes thrown</span>
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-baseline gap-3">
-                    <span className="text-4xl font-black text-white tracking-tight tabular-nums">
-                      {liveHoldTime}s
-                    </span>
-                    <span className="text-zinc-400 text-sm font-medium">guard held</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 flex flex-col gap-1.5 border-t border-zinc-800/60 pt-3.5">
-                {movement.dynamics ? (
-                  <>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-zinc-400">Phase:</span>
-                      <span className="font-semibold text-zinc-200 uppercase tracking-wide">
-                        {dynamicStats?.phase ?? 'unknown'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-zinc-400">Top Speed:</span>
-                      <span className="font-semibold font-mono text-zinc-200">
-                        {dynamicStats?.peakVelocityDegPerSec ? `${Math.round(dynamicStats.peakVelocityDegPerSec)}°/s` : '0°/s'}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Guard Status:</span>
-                    <span className={`font-semibold ${feedback?.ok ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                      {feedback?.ok ? 'Active Guard' : 'Inactive'}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={onResetReps}
-                className="mt-4 w-full rounded-xl bg-zinc-800/80 border border-zinc-700/50 py-2.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all shadow-md active:scale-[0.98]"
-              >
-                Reset Reps
-              </button>
-            </div>
-
-            {/* Audio Assistant */}
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-600/10 rounded-full filter blur-2xl pointer-events-none" />
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
-                <h3 className="text-sm font-bold text-zinc-200 mt-1">Live Coaching Audio</h3>
-                <p className="text-zinc-400 text-xs mt-1">Setup voice and hit chiming tones during practice.</p>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3">
-                <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
-                    <span className="text-[10px] text-zinc-500">Speak form corrections</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={voiceEnabled}
-                    onChange={(e) => setVoiceEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4"
-                  />
-                </label>
-
-                <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-zinc-300">Hit Chimes</span>
-                    <span className="text-[10px] text-zinc-500">Sound on clean strikes</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={soundEnabled}
-                    onChange={(e) => setSoundEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Joint Analysis */}
-          {feedback && (
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Live Joint Analysis</span>
-              <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Form Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {feedback.joints.map((j) => {
-                  const spec = movement.joints.find((s) => s.id === j.id);
-                  return (
-                    <AngleProgressBar
-                      key={j.id}
-                      label={spec?.label ?? j.id}
-                      angle={j.angle}
-                      min={spec?.targetMin ?? 0}
-                      max={spec?.targetMax ?? 180}
-                      inRange={j.inRange}
-                      available={j.available}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </>
+        <button
+          type="button"
+          onClick={onResetReps}
+          className="w-full rounded-2xl bg-zinc-900 border border-zinc-850 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-850 transition-all"
+        >
+          Reset Workout Stance Stats
+        </button>
       )}
 
-      {/* --- WORKOUT LOG HISTORY (SHARED) --- */}
+      {/* --- WORKOUT SESSION LOGS (SHARED BY BOTH MODES) --- */}
       <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg flex flex-col gap-3">
         <div className="flex justify-between items-center">
           <div>

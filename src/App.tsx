@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CameraView from './components/CameraView';
-import FeedbackPanel from './components/FeedbackPanel';
+import FeedbackPanel, { FormVerdictPanel } from './components/FeedbackPanel';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
@@ -85,6 +85,9 @@ export default function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
+  // Audio Context Ref to cache and reuse context
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
   // Mode Selection
   const [workoutMode, setWorkoutMode] = useState<WorkoutMode>('practice');
 
@@ -97,6 +100,7 @@ export default function App() {
 
   // Round Session states
   const [roundModeActive, setRoundModeActive] = useState(false);
+  const [roundTimerPaused, setRoundTimerPaused] = useState(false);
   const [currentRound, setCurrentRound] = useState(1);
   const [roundPhase, setRoundPhase] = useState<'work' | 'rest' | 'inactive'>('inactive');
   const [roundTimeLeft, setRoundTimeLeft] = useState(0);
@@ -257,7 +261,7 @@ export default function App() {
 
   // Round session timer tick state machine
   useEffect(() => {
-    if (!roundModeActive) return;
+    if (!roundModeActive || roundTimerPaused) return;
     const interval = setInterval(() => {
       setRoundTimeLeft((prev) => {
         if (prev <= 1) {
@@ -290,7 +294,24 @@ export default function App() {
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [roundModeActive, roundPhase, currentRound, roundCount, roundDurationSec, restDurationSec]);
+  }, [roundModeActive, roundTimerPaused, roundPhase, currentRound, roundCount, roundDurationSec, restDurationSec]);
+
+  // Lazy load AudioContext and reuse context instance
+  function getAudioContext(): AudioContext | null {
+    if (!soundEnabled) return null;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current;
+    } catch (e) {
+      console.warn('Failed to retrieve AudioContext:', e);
+      return null;
+    }
+  }
 
   // Start / stop round workouts
   function handleToggleRoundSession() {
@@ -298,6 +319,7 @@ export default function App() {
       // Terminate workout
       playBoxingBell(3);
       setRoundModeActive(false);
+      setRoundTimerPaused(false);
       setRoundPhase('inactive');
       speakCue("Training session stopped.");
     } else {
@@ -306,6 +328,7 @@ export default function App() {
       setCurrentRound(1);
       setRoundPhase('work');
       setRoundTimeLeft(roundDurationSec);
+      setRoundTimerPaused(false);
       setRoundModeActive(true);
       speakCue("Workout started. Round 1! Fight!");
       
@@ -316,6 +339,15 @@ export default function App() {
     }
   }
 
+  // Pause / Resume workouts
+  function handleTogglePauseRoundSession() {
+    setRoundTimerPaused((prev) => {
+      const next = !prev;
+      speakCue(next ? 'Workout paused.' : 'Workout resumed.');
+      return next;
+    });
+  }
+
   function clearTimers() {
     timersRef.current.forEach((id) => window.clearTimeout(id));
     timersRef.current.forEach((id) => window.clearInterval(id));
@@ -324,10 +356,9 @@ export default function App() {
 
   // Play boxing ring bell
   function playBoxingBell(times = 1) {
-    if (!soundEnabled) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
       const triggerBell = (delay: number) => {
         const osc1 = ctx.createOscillator();
         const osc2 = ctx.createOscillator();
@@ -361,10 +392,9 @@ export default function App() {
 
   // Programmatic Leather Pad Hit Synthesizer (White noise slap + Triangle low sweep thump)
   function playLeatherPadHit() {
-    if (!soundEnabled) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
       // 1. Low Thump (Triangle sweep)
       const thumpOsc = ctx.createOscillator();
       const thumpGain = ctx.createGain();
@@ -412,9 +442,9 @@ export default function App() {
 
   // Play double chime for completed combo
   function playComboSuccessSound() {
-    if (!soundEnabled) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -592,61 +622,67 @@ export default function App() {
         else if (workoutMode === 'combos' && comboStatus === 'waiting') {
           const combo = COMBOS[activeComboIndex];
           const expectedStrikeId = combo.sequence[comboStepIndex];
-          const strikeMov = movements.find((m) => m.id === expectedStrikeId);
+          const baseStrikeMov = movements.find((m) => m.id === expectedStrikeId);
           
-          if (strikeMov && strikeMov.dynamics) {
-            let tracker = trackersRef.current[expectedStrikeId];
-            if (!tracker) {
-              tracker = createDynamicTracker();
-              trackersRef.current[expectedStrikeId] = tracker;
-            }
+          if (baseStrikeMov) {
+            // Apply user's custom calibration parameters to combo strikes!
+            const strikeCal = loadCalibration(expectedStrikeId);
+            const strikeMov = strikeCal ? applyCalibration(baseStrikeMov, strikeCal) : baseStrikeMov;
             
-            const dynResult = tracker.update(
-              fb.joints,
-              timestampMs,
-              strikeMov.dynamics
-            );
-            
-            fb.dynamic = dynResult;
-
-            if (dynResult.reps > lastRepsCountRef.current) {
-              // Target strike landed successfully!
-              playLeatherPadHit();
-              lastRepsCountRef.current = dynResult.reps;
-              
-              // Draw visual glowing concentric shockwave on striking limb
-              const fx = STRIKE_FX_MAP[expectedStrikeId];
-              if (fx) {
-                overlayRef.current?.triggerSplash(fx.index, fx.color);
+            if (strikeMov && strikeMov.dynamics) {
+              let tracker = trackersRef.current[expectedStrikeId];
+              if (!tracker) {
+                tracker = createDynamicTracker();
+                trackersRef.current[expectedStrikeId] = tracker;
               }
               
-              const nextStep = comboStepIndex + 1;
-              if (nextStep < combo.sequence.length) {
-                setComboStepIndex(nextStep);
-                const nextStrikeId = combo.sequence[nextStep];
-                trackersRef.current[nextStrikeId]?.reset();
-                lastRepsCountRef.current = 0;
+              const dynResult = tracker.update(
+                fb.joints,
+                timestampMs,
+                strikeMov.dynamics
+              );
+              
+              fb.dynamic = dynResult;
+
+              if (dynResult.reps > lastRepsCountRef.current) {
+                // Target strike landed successfully!
+                playLeatherPadHit();
+                lastRepsCountRef.current = dynResult.reps;
                 
-                // Prompt next strike in combination
-                const strikeLabel = movements.find(m => m.id === nextStrikeId)?.name ?? nextStrikeId;
-                speakComboStrike(strikeLabel);
-              } else {
-                // Combination fully completed
-                playComboSuccessSound();
-                setComboStatus('success');
-                setCombosCompletedCount((prev) => prev + 1);
+                // Draw visual glowing concentric shockwave on striking limb
+                const fx = STRIKE_FX_MAP[expectedStrikeId];
+                if (fx) {
+                  overlayRef.current?.triggerSplash(fx.index, fx.color);
+                }
                 
-                const encouragements = ['Oowee!', 'Beautiful combo!', 'Power!', 'Nice speed!', 'Perfect form!'];
-                const randomEncouragement = encouragements[Math.floor(Math.random() * encouragements.length)];
-                setComboFeedbackText(randomEncouragement);
-                
-                // Write combo to workout logs
-                logComboToHistory(combo.name);
-                
-                const nextComboTimeout = window.setTimeout(() => {
-                  startNextCombo();
-                }, 2200);
-                timersRef.current.push(nextComboTimeout);
+                const nextStep = comboStepIndex + 1;
+                if (nextStep < combo.sequence.length) {
+                  setComboStepIndex(nextStep);
+                  const nextStrikeId = combo.sequence[nextStep];
+                  trackersRef.current[nextStrikeId]?.reset();
+                  lastRepsCountRef.current = 0;
+                  
+                  // Prompt next strike in combination
+                  const strikeLabel = movements.find(m => m.id === nextStrikeId)?.name ?? nextStrikeId;
+                  speakComboStrike(strikeLabel);
+                } else {
+                  // Combination fully completed
+                  playComboSuccessSound();
+                  setComboStatus('success');
+                  setCombosCompletedCount((prev) => prev + 1);
+                  
+                  const encouragements = ['Oowee!', 'Beautiful combo!', 'Power!', 'Nice speed!', 'Perfect form!'];
+                  const randomEncouragement = encouragements[Math.floor(Math.random() * encouragements.length)];
+                  setComboFeedbackText(randomEncouragement);
+                  
+                  // Write combo to workout logs
+                  logComboToHistory(combo.name);
+                  
+                  const nextComboTimeout = window.setTimeout(() => {
+                    startNextCombo();
+                  }, 2200);
+                  timersRef.current.push(nextComboTimeout);
+                }
               }
             }
           }
@@ -676,7 +712,7 @@ export default function App() {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [cameraReady, detectorReady, workoutMode, comboStatus, activeComboIndex, comboStepIndex, roundModeActive, roundPhase]);
+  }, [cameraReady, detectorReady, workoutMode, comboStatus, activeComboIndex, comboStepIndex, roundModeActive, roundPhase, roundTimerPaused]);
 
   // Set up next pad combo strike sequence
   function startNextCombo(forceIndex?: number) {
@@ -837,117 +873,121 @@ export default function App() {
         </a>
       </header>
 
-      {/* Two-Column Responsive Dashboard Layout */}
+      {/* Balanced Two-Column Dashboard Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Camera View (Main screen) */}
-        <div className="lg:col-span-7 flex flex-col gap-4">
-          <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-zinc-800/80 bg-zinc-950/60 shadow-2xl group">
-            <CameraView
-              videoRef={videoRef}
-              onReady={() => setCameraReady(true)}
-              onError={setError}
-            />
-            <SkeletonOverlay ref={overlayRef} />
-            
-            {/* Rounds Rest Phase Overlay Screen */}
-            {roundModeActive && roundPhase === 'rest' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-md transition-all duration-300 select-none">
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1 rounded-full">
-                    REST & BREATHE
+        
+        {/* Left Column: Camera View + Stance Calibration + Live Form Feedback */}
+        <div className="lg:col-span-7 flex flex-col gap-5">
+          {/* Sticky Mobile Container Wrapper */}
+          <div className="sticky top-0 z-40 lg:relative lg:top-auto bg-[#020205] py-2 lg:py-0 border-b border-zinc-900/60 lg:border-none shadow-sm lg:shadow-none">
+            <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-zinc-800/80 bg-zinc-950/60 shadow-2xl group">
+              <CameraView
+                videoRef={videoRef}
+                onReady={() => setCameraReady(true)}
+                onError={setError}
+              />
+              <SkeletonOverlay ref={overlayRef} />
+              
+              {/* Rounds Rest Phase Overlay Screen */}
+              {roundModeActive && roundPhase === 'rest' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-md transition-all duration-300 select-none">
+                  <div className="flex flex-col items-center gap-2 text-center animate-pulse">
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1 rounded-full">
+                      REST & RECOVERY
+                    </span>
+                    <span className="text-6xl font-black text-white tracking-tight tabular-nums font-mono mt-0.5">
+                      {formatTime(roundTimeLeft)}
+                    </span>
+                    <span className="text-xs text-zinc-400 font-medium">
+                      Next Round: {currentRound + 1} of {roundCount}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Combo Padwork Overlays inside Camera View */}
+              {workoutMode === 'combos' && comboStatus === 'waiting' && (!roundModeActive || roundPhase === 'work') && (
+                <div className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-1 pointer-events-none select-none">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full backdrop-blur-sm">
+                    STRIKE TARGET
                   </span>
-                  <span className="text-6xl font-black text-white tracking-tight tabular-nums font-mono animate-pulse">
-                    {formatTime(roundTimeLeft)}
+                  <span className="text-3xl md:text-5xl font-black text-amber-300 tracking-tight drop-shadow-[0_4px_12px_rgba(245,158,11,0.5)] uppercase animate-pulse">
+                    {movements.find(m => m.id === COMBOS[activeComboIndex].sequence[comboStepIndex])?.name ?? COMBOS[activeComboIndex].sequence[comboStepIndex]}
                   </span>
-                  <span className="text-xs text-zinc-400 font-medium">
-                    Next Round: {currentRound + 1} of {roundCount}
+                  <div className="flex gap-1.5 mt-2 bg-black/50 px-3.5 py-2 rounded-2xl border border-zinc-800/60 backdrop-blur-md">
+                    {COMBOS[activeComboIndex].sequence.map((strikeId, i) => {
+                      const strikeLabel = movements.find(m => m.id === strikeId)?.name ?? strikeId;
+                      const isPassed = i < comboStepIndex;
+                      const isCurrent = i === comboStepIndex;
+                      return (
+                        <span
+                          key={i}
+                          className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase transition-all duration-300 ${
+                            isPassed
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : isCurrent
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse scale-105 shadow shadow-amber-500/10'
+                                : 'bg-zinc-800/30 text-zinc-500 border border-zinc-800/50'
+                          }`}
+                        >
+                          {strikeLabel}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Combo hit flash success */}
+              {workoutMode === 'combos' && comboStatus === 'success' && (!roundModeActive || roundPhase === 'work') && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-emerald-950/30 backdrop-blur-sm pointer-events-none select-none transition-all duration-300">
+                  <div className="flex flex-col items-center gap-1 text-center animate-bounce">
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/20 border border-emerald-500/35 px-4 py-1 rounded-full">
+                      COMBO COMPLETE!
+                    </span>
+                    <span className="text-4xl md:text-5xl font-black text-white tracking-tight drop-shadow-[0_4px_16px_rgba(16,185,129,0.5)]">
+                      {comboFeedbackText}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Loading/Setup overlay */}
+              {(!cameraReady || !detectorReady) && !error && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020205]/95 text-zinc-400 gap-3 backdrop-blur-sm select-none">
+                  <svg className="animate-spin h-10 w-10 text-red-500" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="text-xs font-bold tracking-widest font-mono uppercase text-zinc-400">
+                    {!detectorReady ? 'Loading Pose Landmarker AI...' : 'Starting camera stream...'}
                   </span>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Combo Padwork Overlays inside Camera View */}
-            {workoutMode === 'combos' && comboStatus === 'waiting' && (!roundModeActive || roundPhase === 'work') && (
-              <div className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-1 pointer-events-none select-none">
-                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full backdrop-blur-sm">
-                  STRIKE TARGET
-                </span>
-                <span className="text-3xl md:text-5xl font-black text-amber-300 tracking-tight drop-shadow-[0_4px_12px_rgba(245,158,11,0.5)] uppercase animate-pulse">
-                  {movements.find(m => m.id === COMBOS[activeComboIndex].sequence[comboStepIndex])?.name ?? COMBOS[activeComboIndex].sequence[comboStepIndex]}
-                </span>
-                <div className="flex gap-1.5 mt-2 bg-black/50 px-3.5 py-2 rounded-2xl border border-zinc-800/60 backdrop-blur-md">
-                  {COMBOS[activeComboIndex].sequence.map((strikeId, i) => {
-                    const strikeLabel = movements.find(m => m.id === strikeId)?.name ?? strikeId;
-                    const isPassed = i < comboStepIndex;
-                    const isCurrent = i === comboStepIndex;
-                    return (
-                      <span
-                        key={i}
-                        className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase transition-all duration-300 ${
-                          isPassed
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : isCurrent
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse scale-105 shadow shadow-amber-500/10'
-                              : 'bg-zinc-800/30 text-zinc-500 border border-zinc-800/50'
-                        }`}
-                      >
-                        {strikeLabel}
-                      </span>
-                    );
-                  })}
+              {/* Calibration countdown layout overlay */}
+              {overlayMessage && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm transition-all duration-300 select-none">
+                  <div className="flex flex-col items-center gap-2 text-center animate-pulse">
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1 rounded-full">
+                      CALIBRATION TRIGGERED
+                    </span>
+                    <span className="text-8xl font-black text-white tracking-tight drop-shadow-[0_4px_24px_rgba(255,255,255,0.25)] font-mono">
+                      {overlayMessage}
+                    </span>
+                    <span className="text-xs text-zinc-300 font-semibold tracking-wide">
+                      {calibUi.phase === 'countdown' ? 'Get ready and strike stance...' : 'Observing stance limits...'}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Combo hit flash success */}
-            {workoutMode === 'combos' && comboStatus === 'success' && (!roundModeActive || roundPhase === 'work') && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-emerald-950/30 backdrop-blur-sm pointer-events-none select-none transition-all duration-300">
-                <div className="flex flex-col items-center gap-1 text-center animate-bounce">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/20 border border-emerald-500/35 px-4 py-1 rounded-full">
-                    COMBO COMPLETE!
-                  </span>
-                  <span className="text-4xl md:text-5xl font-black text-white tracking-tight drop-shadow-[0_4px_16px_rgba(16,185,129,0.5)]">
-                    {comboFeedbackText}
-                  </span>
+              {error && (
+                <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-rose-400 bg-black/80 backdrop-blur-sm font-semibold select-none">
+                  {error}
                 </div>
-              </div>
-            )}
-
-            {/* Loading/Setup overlay */}
-            {(!cameraReady || !detectorReady) && !error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020205]/95 text-zinc-400 gap-3 backdrop-blur-sm select-none">
-                <svg className="animate-spin h-10 w-10 text-red-500" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <span className="text-xs font-bold tracking-widest font-mono uppercase text-zinc-400">
-                  {!detectorReady ? 'Loading Pose Landmarker AI...' : 'Starting camera stream...'}
-                </span>
-              </div>
-            )}
-
-            {/* Calibration countdown layout overlay */}
-            {overlayMessage && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm transition-all duration-300 select-none">
-                <div className="flex flex-col items-center gap-2 text-center animate-pulse">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1 rounded-full">
-                    CALIBRATION TRIGGERED
-                  </span>
-                  <span className="text-8xl font-black text-white tracking-tight drop-shadow-[0_4px_24px_rgba(255,255,255,0.25)] font-mono">
-                    {overlayMessage}
-                  </span>
-                  <span className="text-xs text-zinc-300 font-semibold tracking-wide">
-                    {calibUi.phase === 'countdown' ? 'Get ready and strike stance...' : 'Observing stance limits...'}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-rose-400 bg-black/80 backdrop-blur-sm font-semibold select-none">
-                {error}
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Calibration Panel */}
@@ -985,11 +1025,20 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* Balanced Placement: Live Form Feedback directly below Camera View */}
+          <FormVerdictPanel
+            feedback={feedback}
+            movement={movement}
+            liveHoldTime={liveHoldTime}
+            dynamicStats={dynamicStats}
+            workoutMode={workoutMode}
+          />
         </div>
 
-        {/* Right Column: Sidebar Dashboard (Movement select + Stats + history) */}
+        {/* Right Column: Settings + Timers + Combo Lists + History Logs */}
         <div className="lg:col-span-5 flex flex-col gap-6">
-          {/* Movement Selection (Only shown in single movement practice) */}
+          {/* Stance Selector (Only Practice Mode) */}
           {workoutMode === 'practice' && (
             <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/20 backdrop-blur-md p-5 shadow-xl">
               <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Striking Database</span>
@@ -1026,12 +1075,10 @@ export default function App() {
             </div>
           )}
 
-          {/* Feedback details */}
+          {/* Controls Panel */}
           <FeedbackPanel
             feedback={feedback}
             movement={movement}
-            liveHoldTime={liveHoldTime}
-            dynamicStats={dynamicStats}
             voiceEnabled={voiceEnabled}
             soundEnabled={soundEnabled}
             setVoiceEnabled={setVoiceEnabled}
@@ -1050,7 +1097,7 @@ export default function App() {
             startNextCombo={startNextCombo}
             COMBOS={COMBOS}
             
-            // Round structures
+            // Round settings
             roundModeActive={roundModeActive}
             currentRound={currentRound}
             roundPhase={roundPhase}
@@ -1062,6 +1109,8 @@ export default function App() {
             restDurationSec={restDurationSec}
             setRestDurationSec={setRestDurationSec}
             onToggleRoundSession={handleToggleRoundSession}
+            roundTimerPaused={roundTimerPaused}
+            onTogglePauseRoundSession={handleTogglePauseRoundSession}
           />
         </div>
       </div>
