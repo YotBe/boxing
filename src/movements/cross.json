@@ -1,0 +1,27 @@
+{
+  "id": "cross",
+  "name": "Right Cross",
+  "joints": [
+    {
+      "id": "right_elbow",
+      "label": "Right Elbow",
+      "points": [12, 14, 16],
+      "targetMin": 30,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "right_elbow",
+      "when": "below",
+      "cue": "Keep your guard tight, don't hyperextend."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "right_elbow",
+    "enterDownBelow": 90,
+    "enterUpAbove": 150,
+    "countOn": "up",
+    "label": "Crosses"
+  }
+}

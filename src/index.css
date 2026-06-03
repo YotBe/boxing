@@ -6,11 +6,16 @@ html,
 body,
 #root {
   height: 100%;
-  background-color: #000;
+  background-color: #020205;
   color: #fafafa;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter',
-    'Segoe UI', Roboto, sans-serif;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   overscroll-behavior: none;
+}
+
+code,
+pre,
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
 }
