@@ -7,6 +7,8 @@ import leftHookJson from './left-hook.json';
 import rightElbowJson from './right-elbow.json';
 import leftElbowJson from './left-elbow.json';
 import rightHookJson from './right-hook.json';
+import leftKneeJson from './left-knee.json';
+import rightTeepJson from './right-teep.json';
 
 const jab = jabJson as unknown as MovementDefinition;
 const knee = kneeJson as unknown as MovementDefinition;
@@ -14,6 +16,8 @@ const leftHook = leftHookJson as unknown as MovementDefinition;
 const rightElbow = rightElbowJson as unknown as MovementDefinition;
 const leftElbow = leftElbowJson as unknown as MovementDefinition;
 const rightHook = rightHookJson as unknown as MovementDefinition;
+const leftKnee = leftKneeJson as unknown as MovementDefinition;
+const rightTeep = rightTeepJson as unknown as MovementDefinition;
 
 function frame(parts: Record<number, [number, number]>): Landmark[] {
   const ls: Landmark[] = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
@@ -97,6 +101,32 @@ describe('Muay Thai Strike Evaluations', () => {
         14: [0.75, 0.3], // right elbow (perpendicular = 90 deg)
       }),
       rightHook
+    );
+    expect(fb.tracked).toBe(true);
+    expect(fb.ok).toBe(true);
+  });
+
+  it('evaluates left knee strike hip angle', () => {
+    const fb = evaluate(
+      frame({
+        11: [0.4, 0.3], // left shoulder
+        23: [0.4, 0.6], // left hip
+        25: [0.4, 0.75], // left knee
+      }),
+      leftKnee
+    );
+    expect(fb.tracked).toBe(true);
+    expect(fb.ok).toBe(true);
+  });
+
+  it('evaluates right teep kick knee angle', () => {
+    const fb = evaluate(
+      frame({
+        24: [0.6, 0.6], // right hip
+        26: [0.6, 0.75], // right knee
+        28: [0.6, 0.9], // right ankle
+      }),
+      rightTeep
     );
     expect(fb.tracked).toBe(true);
     expect(fb.ok).toBe(true);

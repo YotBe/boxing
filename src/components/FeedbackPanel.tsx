@@ -178,6 +178,8 @@ export default function FeedbackPanel({
     if (id === 'right-elbow') return 'Right Elbow Strike';
     if (id === 'left-elbow') return 'Left Elbow Strike';
     if (id === 'right-hook') return 'Right Hook';
+    if (id === 'left-knee') return 'Left Knee Strike';
+    if (id === 'right-teep') return 'Right Teep (Front Kick)';
     return id;
   };
 

@@ -1,0 +1,27 @@
+{
+  "id": "left-knee",
+  "name": "Left Knee Strike",
+  "joints": [
+    {
+      "id": "left_hip",
+      "label": "Left Hip",
+      "points": [11, 23, 25],
+      "targetMin": 70,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_hip",
+      "when": "below",
+      "cue": "Control your core, don't lean back too far."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "left_hip",
+    "enterDownBelow": 125,
+    "enterUpAbove": 165,
+    "countOn": "down",
+    "label": "Left Knees"
+  }
+}
