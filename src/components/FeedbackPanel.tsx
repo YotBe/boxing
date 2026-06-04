@@ -176,6 +176,8 @@ export default function FeedbackPanel({
     if (id === 'teep') return 'Left Teep';
     if (id === 'left-hook') return 'Left Hook';
     if (id === 'right-elbow') return 'Right Elbow Strike';
+    if (id === 'left-elbow') return 'Left Elbow Strike';
+    if (id === 'right-hook') return 'Right Hook';
     return id;
   };
 
