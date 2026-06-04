@@ -877,13 +877,13 @@ export default function App() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-8">
+    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 md:p-8">
       {/* Header section with Glass design */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border border-zinc-800/80 bg-zinc-950/40 backdrop-blur-md p-6 rounded-3xl shadow-xl">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border border-zinc-800/80 border-t-red-500/40 border-t-2 bg-zinc-950/40 backdrop-blur-md p-6 rounded-3xl shadow-xl shadow-red-500/5">
         <div>
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-500 bg-clip-text text-transparent uppercase font-mono">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
+            <h1 className="text-2xl font-extrabold tracking-tight text-zinc-100 uppercase font-mono">
               Nak Muay Coach
             </h1>
           </div>
@@ -913,6 +913,18 @@ export default function App() {
               onError={setError}
             />
             <SkeletonOverlay ref={overlayRef} />
+
+            {/* High-tech viewfinder HUD corners overlay */}
+            <div className="absolute inset-4 border border-zinc-800/20 pointer-events-none rounded-2xl">
+              {/* Top-Left */}
+              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-red-500/40 rounded-tl-sm" />
+              {/* Top-Right */}
+              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-red-500/40 rounded-tr-sm" />
+              {/* Bottom-Left */}
+              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-red-500/40 rounded-bl-sm" />
+              {/* Bottom-Right */}
+              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-red-500/40 rounded-br-sm" />
+            </div>
             
             {/* Rounds Rest Phase Overlay Screen */}
             {roundModeActive && roundPhase === 'rest' && (
@@ -1067,10 +1079,10 @@ export default function App() {
                       key={mov.id}
                       type="button"
                       onClick={() => handleSelectMovement(mov.id)}
-                      className={`group text-left rounded-xl p-3.5 border transition-all duration-200 flex items-center justify-between ${
+                      className={`group text-left rounded-xl p-3 border transition-all duration-200 flex items-center justify-between active:scale-[0.98] ${
                         isActive
-                          ? 'bg-red-600/10 border-red-500/30 text-red-400 shadow-md shadow-red-500/5'
-                          : 'bg-zinc-900/30 border-zinc-800/50 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/50 hover:text-zinc-300'
+                          ? 'bg-red-600/10 border-red-500/30 border-l-4 border-l-red-500 text-red-400 shadow-md shadow-red-500/5 pl-2.5'
+                          : 'bg-zinc-900/30 border-zinc-800/50 border-l-4 border-l-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/50 hover:text-zinc-300 pl-2.5'
                       }`}
                     >
                       <div>
@@ -1082,7 +1094,7 @@ export default function App() {
                         </div>
                       </div>
                       {isActive && (
-                        <span className="h-2 w-2 rounded-full bg-red-400" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" />
                       )}
                     </button>
                   );
