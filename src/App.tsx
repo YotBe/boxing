@@ -58,6 +58,8 @@ const COMBOS = [
   { name: '1-2-Knee Combo', sequence: ['jab', 'cross', 'knee'] },
   { name: 'Teep & Cross', sequence: ['teep', 'cross'] },
   { name: 'Dutch Style (Jab-Cross-Teep-Knee)', sequence: ['jab', 'cross', 'teep', 'knee'] },
+  { name: 'Classic 1-2-Hook', sequence: ['jab', 'cross', 'left-hook'] },
+  { name: 'Muay Thai Destruction (Jab-Elbow-Knee)', sequence: ['jab', 'right-elbow', 'knee'] },
 ];
 
 const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
@@ -65,6 +67,8 @@ const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
   'cross': { index: 16, color: 'rgb(245, 158, 11)' }, // Right Wrist, Amber
   'knee': { index: 26, color: 'rgb(16, 185, 129)' }, // Right Knee, Emerald
   'teep': { index: 27, color: 'rgb(99, 102, 241)' }, // Left Ankle, Indigo
+  'left-hook': { index: 15, color: 'rgb(168, 85, 247)' }, // Left Wrist, Purple
+  'right-elbow': { index: 14, color: 'rgb(6, 182, 212)' }, // Right Elbow, Cyan
 };
 
 export default function App() {
@@ -209,6 +213,8 @@ export default function App() {
       'cross': createDynamicTracker(),
       'knee': createDynamicTracker(),
       'teep': createDynamicTracker(),
+      'left-hook': createDynamicTracker(),
+      'right-elbow': createDynamicTracker(),
     };
   }, []);
 
