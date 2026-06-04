@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 interface CameraViewProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -19,6 +19,15 @@ export default function CameraView({
   onReady,
   onError,
 }: CameraViewProps) {
+  const onReadyRef = useRef(onReady);
+  const onErrorRef = useRef(onError);
+
+  // Keep refs updated with latest callback references
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onErrorRef.current = onError;
+  }, [onReady, onError]);
+
   useEffect(() => {
     let stream: MediaStream | null = null;
     let cancelled = false;
@@ -41,9 +50,9 @@ export default function CameraView({
         if (!video) return;
         video.srcObject = stream;
         await video.play();
-        onReady();
+        onReadyRef.current();
       } catch (err) {
-        onError(
+        onErrorRef.current(
           err instanceof Error
             ? `Camera access failed: ${err.message}`
             : 'Camera access failed.',
@@ -56,7 +65,7 @@ export default function CameraView({
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [selectedCameraId, onError, videoRef, onReady]);
+  }, [selectedCameraId, videoRef]);
 
   return (
     <video
