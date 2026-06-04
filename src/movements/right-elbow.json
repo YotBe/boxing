@@ -1,0 +1,27 @@
+{
+  "id": "right-elbow",
+  "name": "Right Elbow Strike",
+  "joints": [
+    {
+      "id": "right_elbow_flex",
+      "label": "Right Elbow",
+      "points": [12, 14, 16],
+      "targetMin": 10,
+      "targetMax": 50
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "right_elbow_flex",
+      "when": "above",
+      "cue": "Flex your right forearm tightly against your bicep to strike."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "right_elbow_flex",
+    "enterDownBelow": 45,
+    "enterUpAbove": 85,
+    "countOn": "down",
+    "label": "Right Elbows"
+  }
+}

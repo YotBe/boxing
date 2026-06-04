@@ -1,7 +1,8 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 interface CameraViewProps {
   videoRef: RefObject<HTMLVideoElement>;
+  selectedCameraId?: string;
   /** Fired once the stream is playing and dimensions are known. */
   onReady: () => void;
   onError: (message: string) => void;
@@ -14,17 +15,31 @@ interface CameraViewProps {
  */
 export default function CameraView({
   videoRef,
+  selectedCameraId,
   onReady,
   onError,
 }: CameraViewProps) {
+  const onReadyRef = useRef(onReady);
+  const onErrorRef = useRef(onError);
+
+  // Keep refs updated with latest callback references
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onErrorRef.current = onError;
+  }, [onReady, onError]);
+
   useEffect(() => {
     let stream: MediaStream | null = null;
     let cancelled = false;
 
     async function start() {
       try {
+        const videoConstraints: MediaTrackConstraints = selectedCameraId
+          ? { deviceId: { exact: selectedCameraId } }
+          : { facingMode: 'user' };
+
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: videoConstraints,
           audio: false,
         });
         if (cancelled) {
@@ -35,9 +50,9 @@ export default function CameraView({
         if (!video) return;
         video.srcObject = stream;
         await video.play();
-        onReady();
+        onReadyRef.current();
       } catch (err) {
-        onError(
+        onErrorRef.current(
           err instanceof Error
             ? `Camera access failed: ${err.message}`
             : 'Camera access failed.',
@@ -50,8 +65,7 @@ export default function CameraView({
       cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedCameraId, videoRef]);
 
   return (
     <video

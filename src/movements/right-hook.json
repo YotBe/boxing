@@ -1,0 +1,27 @@
+{
+  "id": "right-hook",
+  "name": "Right Hook",
+  "joints": [
+    {
+      "id": "right_shoulder_hook",
+      "label": "Right Shoulder",
+      "points": [24, 12, 14],
+      "targetMin": 75,
+      "targetMax": 130
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "right_shoulder_hook",
+      "when": "below",
+      "cue": "Raise your right elbow horizontally to align the hook."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "right_shoulder_hook",
+    "enterDownBelow": 65,
+    "enterUpAbove": 90,
+    "countOn": "up",
+    "label": "Right Hooks"
+  }
+}

@@ -58,6 +58,14 @@ const COMBOS = [
   { name: '1-2-Knee Combo', sequence: ['jab', 'cross', 'knee'] },
   { name: 'Teep & Cross', sequence: ['teep', 'cross'] },
   { name: 'Dutch Style (Jab-Cross-Teep-Knee)', sequence: ['jab', 'cross', 'teep', 'knee'] },
+  { name: 'Classic 1-2-Hook', sequence: ['jab', 'cross', 'left-hook'] },
+  { name: 'Muay Thai Destruction (Jab-Elbow-Knee)', sequence: ['jab', 'right-elbow', 'knee'] },
+  { name: 'Elbow Havoc (Left-Right Elbow-Knee)', sequence: ['left-elbow', 'right-elbow', 'knee'] },
+  { name: 'Hook & Cross (Right Hook-Left Hook-Cross)', sequence: ['right-hook', 'left-hook', 'cross'] },
+  { name: 'Double Teep (Left-Right Teep)', sequence: ['teep', 'right-teep'] },
+  { name: 'Golden Kick (Jab-Cross-Left Knee-Right Knee)', sequence: ['jab', 'cross', 'left-knee', 'knee'] },
+  { name: 'Thai Kick Boxing (Jab-Cross-Right Kick)', sequence: ['jab', 'cross', 'right-kick'] },
+  { name: 'Champion Flow (Jab-Left Kick-Right Hook-Left Knee)', sequence: ['jab', 'left-kick', 'right-hook', 'left-knee'] },
 ];
 
 const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
@@ -65,6 +73,14 @@ const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
   'cross': { index: 16, color: 'rgb(245, 158, 11)' }, // Right Wrist, Amber
   'knee': { index: 26, color: 'rgb(16, 185, 129)' }, // Right Knee, Emerald
   'teep': { index: 27, color: 'rgb(99, 102, 241)' }, // Left Ankle, Indigo
+  'left-hook': { index: 15, color: 'rgb(168, 85, 247)' }, // Left Wrist, Purple
+  'right-elbow': { index: 14, color: 'rgb(6, 182, 212)' }, // Right Elbow, Cyan
+  'left-elbow': { index: 13, color: 'rgb(6, 182, 212)' }, // Left Elbow, Cyan
+  'right-hook': { index: 16, color: 'rgb(168, 85, 247)' }, // Right Wrist, Purple
+  'left-knee': { index: 25, color: 'rgb(16, 185, 129)' }, // Left Knee, Emerald
+  'right-teep': { index: 28, color: 'rgb(99, 102, 241)' }, // Right Ankle, Indigo
+  'left-kick': { index: 27, color: 'rgb(239, 68, 68)' }, // Left Ankle, Red
+  'right-kick': { index: 28, color: 'rgb(239, 68, 68)' }, // Right Ankle, Red
 };
 
 export default function App() {
@@ -75,15 +91,37 @@ export default function App() {
   // (3D) landmarks drive the angle evaluation.
   const imgSmootherRef = useRef(createSmoother(0.5));
   const worldSmootherRef = useRef(createSmoother(0.5));
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
+  // Camera devices selection
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+
   // Sound settings
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Shared lazy AudioContext generator to prevent leak/crash
+  const getAudioContext = (): AudioContext | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current;
+    } catch (err) {
+      console.warn('Failed to initialize AudioContext:', err);
+      return null;
+    }
+  };
 
   // Mode Selection
   const [workoutMode, setWorkoutMode] = useState<WorkoutMode>('practice');
@@ -187,6 +225,14 @@ export default function App() {
       'cross': createDynamicTracker(),
       'knee': createDynamicTracker(),
       'teep': createDynamicTracker(),
+      'left-hook': createDynamicTracker(),
+      'right-elbow': createDynamicTracker(),
+      'left-elbow': createDynamicTracker(),
+      'right-hook': createDynamicTracker(),
+      'left-knee': createDynamicTracker(),
+      'right-teep': createDynamicTracker(),
+      'left-kick': createDynamicTracker(),
+      'right-kick': createDynamicTracker(),
     };
   }, []);
 
@@ -326,7 +372,8 @@ export default function App() {
   function playBoxingBell(times = 1) {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
       
       const triggerBell = (delay: number) => {
         const osc1 = ctx.createOscillator();
@@ -363,7 +410,8 @@ export default function App() {
   function playLeatherPadHit() {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
       
       // 1. Low Thump (Triangle sweep)
       const thumpOsc = ctx.createOscillator();
@@ -414,7 +462,9 @@ export default function App() {
   function playComboSuccessSound() {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -497,6 +547,44 @@ export default function App() {
       detectorRef.current = null;
     };
   }, []);
+
+  // Enumerate active camera devices when camera is ready
+  useEffect(() => {
+    async function updateDevices() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+        setCameraDevices(videoDevices);
+        if (videoDevices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(videoDevices[0].deviceId);
+        }
+      } catch (err) {
+        console.warn('enumerateDevices failed:', err);
+      }
+    }
+
+    updateDevices();
+
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', updateDevices);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
+      };
+    }
+  }, [cameraReady, selectedCameraId]);
+
+  // Compute camera view container ring/glow styles for round phases
+  const containerRingClass = useMemo(() => {
+    if (!roundModeActive) return 'border-zinc-800/80 ring-0';
+    if (roundPhase === 'work') {
+      return 'border-red-500/50 ring-4 ring-red-500/20 shadow-[0_0_24px_rgba(239,68,68,0.15)] animate-pulse';
+    }
+    if (roundPhase === 'rest') {
+      return 'border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-[0_0_24px_rgba(16,185,129,0.15)]';
+    }
+    return 'border-zinc-800/80 ring-0';
+  }, [roundModeActive, roundPhase]);
 
   // Drive the realtime loop once camera + detector are both ready.
   useEffect(() => {
@@ -813,13 +901,13 @@ export default function App() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4 md:p-8">
+    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 md:p-8">
       {/* Header section with Glass design */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border border-zinc-800/80 bg-zinc-950/40 backdrop-blur-md p-6 rounded-3xl shadow-xl">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border border-zinc-800/80 border-t-red-500/40 border-t-2 bg-zinc-950/40 backdrop-blur-md p-6 rounded-3xl shadow-xl shadow-red-500/5">
         <div>
           <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white via-zinc-200 to-zinc-500 bg-clip-text text-transparent uppercase font-mono">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
+            <h1 className="text-2xl font-extrabold tracking-tight text-zinc-100 uppercase font-mono">
               Nak Muay Coach
             </h1>
           </div>
@@ -838,16 +926,29 @@ export default function App() {
       </header>
 
       {/* Two-Column Responsive Dashboard Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Camera View (Main screen) */}
         <div className="lg:col-span-7 flex flex-col gap-4">
-          <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-zinc-800/80 bg-zinc-950/60 shadow-2xl group">
+          <div className={`relative aspect-video w-full overflow-hidden rounded-3xl border bg-zinc-950/60 shadow-2xl group transition-all duration-500 ${containerRingClass}`}>
             <CameraView
               videoRef={videoRef}
+              selectedCameraId={selectedCameraId}
               onReady={() => setCameraReady(true)}
               onError={setError}
             />
             <SkeletonOverlay ref={overlayRef} />
+
+            {/* High-tech viewfinder HUD corners overlay */}
+            <div className="absolute inset-4 border border-zinc-800/20 pointer-events-none rounded-2xl">
+              {/* Top-Left */}
+              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-red-500/40 rounded-tl-sm" />
+              {/* Top-Right */}
+              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-red-500/40 rounded-tr-sm" />
+              {/* Bottom-Left */}
+              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-red-500/40 rounded-bl-sm" />
+              {/* Bottom-Right */}
+              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-red-500/40 rounded-br-sm" />
+            </div>
             
             {/* Rounds Rest Phase Overlay Screen */}
             {roundModeActive && roundPhase === 'rest' && (
@@ -988,7 +1089,7 @@ export default function App() {
         </div>
 
         {/* Right Column: Sidebar Dashboard (Movement select + Stats + history) */}
-        <div className="lg:col-span-5 flex flex-col gap-6">
+        <aside className="lg:col-span-5 flex flex-col gap-6">
           {/* Movement Selection (Only shown in single movement practice) */}
           {workoutMode === 'practice' && (
             <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/20 backdrop-blur-md p-5 shadow-xl">
@@ -1002,10 +1103,10 @@ export default function App() {
                       key={mov.id}
                       type="button"
                       onClick={() => handleSelectMovement(mov.id)}
-                      className={`group text-left rounded-xl p-3.5 border transition-all duration-200 flex items-center justify-between ${
+                      className={`group text-left rounded-xl p-3 border transition-all duration-200 flex items-center justify-between active:scale-[0.98] ${
                         isActive
-                          ? 'bg-red-600/10 border-red-500/30 text-red-400 shadow-md shadow-red-500/5'
-                          : 'bg-zinc-900/30 border-zinc-800/50 text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/50 hover:text-zinc-300'
+                          ? 'bg-red-600/10 border-red-500/30 border-l-4 border-l-red-500 text-red-400 shadow-md shadow-red-500/5 pl-2.5'
+                          : 'bg-zinc-900/30 border-zinc-800/50 border-l-4 border-l-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/50 hover:text-zinc-300 pl-2.5'
                       }`}
                     >
                       <div>
@@ -1017,7 +1118,7 @@ export default function App() {
                         </div>
                       </div>
                       {isActive && (
-                        <span className="h-2 w-2 rounded-full bg-red-400" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" />
                       )}
                     </button>
                   );
@@ -1062,9 +1163,14 @@ export default function App() {
             restDurationSec={restDurationSec}
             setRestDurationSec={setRestDurationSec}
             onToggleRoundSession={handleToggleRoundSession}
+
+            // Camera settings
+            cameraDevices={cameraDevices}
+            selectedCameraId={selectedCameraId}
+            setSelectedCameraId={setSelectedCameraId}
           />
-        </div>
-      </div>
+        </aside>
+      </main>
     </div>
   );
 }

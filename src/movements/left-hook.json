@@ -1,0 +1,27 @@
+{
+  "id": "left-hook",
+  "name": "Left Hook",
+  "joints": [
+    {
+      "id": "left_shoulder_hook",
+      "label": "Left Shoulder",
+      "points": [23, 11, 13],
+      "targetMin": 75,
+      "targetMax": 130
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_shoulder_hook",
+      "when": "below",
+      "cue": "Raise your left elbow horizontally to align the hook."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "left_shoulder_hook",
+    "enterDownBelow": 65,
+    "enterUpAbove": 90,
+    "countOn": "up",
+    "label": "Left Hooks"
+  }
+}

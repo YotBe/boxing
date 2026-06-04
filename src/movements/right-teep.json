@@ -1,0 +1,27 @@
+{
+  "id": "right-teep",
+  "name": "Right Teep (Front Kick)",
+  "joints": [
+    {
+      "id": "right_knee",
+      "label": "Right Knee",
+      "points": [24, 26, 28],
+      "targetMin": 70,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "right_knee",
+      "when": "below",
+      "cue": "Extend your leg fully to push."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "right_knee",
+    "enterDownBelow": 100,
+    "enterUpAbove": 155,
+    "countOn": "up",
+    "label": "Right Teeps"
+  }
+}
