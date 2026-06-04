@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Feedback, MovementDefinition } from '../engine/types';
 
 interface WorkoutLog {
@@ -25,8 +25,8 @@ interface FeedbackPanelProps {
   onResetReps: () => void;
 
   // Combo Coach Additions
-  workoutMode: 'practice' | 'combos';
-  setWorkoutMode: (mode: 'practice' | 'combos') => void;
+  workoutMode: 'practice' | 'combos' | 'analytics';
+  setWorkoutMode: (mode: 'practice' | 'combos' | 'analytics') => void;
   activeComboIndex: number;
   setActiveComboIndex: (idx: number) => void;
   comboStepIndex: number;
@@ -35,6 +35,11 @@ interface FeedbackPanelProps {
   comboFeedbackText: string;
   startNextCombo: (idx?: number) => void;
   COMBOS: { name: string; sequence: string[] }[];
+  onAddCustomCombo: (name: string, sequence: string[]) => void;
+  onDeleteCustomCombo: (idx: number) => void;
+  voiceCommandsEnabled: boolean;
+  setVoiceCommandsEnabled: (enabled: boolean) => void;
+  voiceSpeechSupported: boolean;
 
   // Rounds Workout Additions
   roundModeActive: boolean;
@@ -129,6 +134,127 @@ function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleP
   );
 }
 
+interface ComboBuilderProps {
+  onAddCustomCombo: (name: string, sequence: string[]) => void;
+  getStrikeName: (id: string) => string;
+}
+
+function ComboBuilder({ onAddCustomCombo, getStrikeName }: ComboBuilderProps) {
+  const [name, setName] = useState('');
+  const [sequence, setSequence] = useState<string[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const strikesList = [
+    'jab', 'cross', 'left-hook', 'right-hook',
+    'left-elbow', 'right-elbow', 'left-knee', 'knee',
+    'teep', 'right-teep', 'left-kick', 'right-kick'
+  ];
+
+  const handleAddStrike = (strike: string) => {
+    if (sequence.length >= 8) return;
+    setSequence((prev) => [...prev, strike]);
+  };
+
+  const handleRemoveStrike = (idx: number) => {
+    setSequence((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSave = () => {
+    if (!name.trim()) return;
+    if (sequence.length === 0) return;
+    onAddCustomCombo(name.trim(), sequence);
+    setName('');
+    setSequence([]);
+    setIsOpen(false);
+  };
+
+  if (!isOpen) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="w-full rounded-2xl border border-dashed border-zinc-800 hover:border-zinc-700 bg-zinc-950/20 hover:bg-zinc-950/40 p-4 text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-all flex items-center justify-center gap-1.5 active:scale-[0.98] py-3.5"
+      >
+        <span className="text-red-500 font-bold">+</span> Create Custom Pad Combo
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg flex flex-col gap-4">
+      <div className="flex justify-between items-center border-b border-zinc-800/60 pb-2">
+        <h4 className="text-xs font-bold text-zinc-200 uppercase tracking-wider font-mono">Custom Combo Builder</h4>
+        <button
+          type="button"
+          onClick={() => setIsOpen(false)}
+          className="text-zinc-500 hover:text-zinc-300 text-xs font-bold"
+        >
+          Cancel
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="custom-combo-name" className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">Combo Name</label>
+        <input
+          id="custom-combo-name"
+          type="text"
+          placeholder="e.g. Boxing Focus"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="rounded-xl bg-zinc-950 border border-zinc-800 text-xs text-zinc-200 p-2.5 outline-none focus:border-zinc-700 transition-all placeholder:text-zinc-700"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">Strike Sequence</span>
+        <div className="min-h-[48px] rounded-xl bg-zinc-950/80 border border-zinc-850 p-2.5 flex flex-wrap gap-1.5 items-center">
+          {sequence.length === 0 ? (
+            <span className="text-[10px] text-zinc-700 italic select-none">Click weapons below to construct sequence...</span>
+          ) : (
+            sequence.map((strike, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleRemoveStrike(idx)}
+                className="text-[9px] font-bold px-2 py-1 rounded bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-rose-500/20 hover:border-rose-500/35 hover:text-rose-300 transition-all flex items-center gap-1 group"
+                title="Click to remove strike"
+              >
+                <span>{getStrikeName(strike)}</span>
+                <span className="text-[8px] text-red-500/50 group-hover:text-rose-500/80">×</span>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">Add Strike Weapon</span>
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-1">
+          {strikesList.map((strike) => (
+            <button
+              key={strike}
+              type="button"
+              onClick={() => handleAddStrike(strike)}
+              className="rounded-lg bg-zinc-950 border border-zinc-900 hover:border-zinc-800 text-[10px] font-medium text-zinc-400 py-1.5 hover:text-white transition-all text-center hover:bg-zinc-900/50 truncate"
+            >
+              {getStrikeName(strike)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!name.trim() || sequence.length === 0}
+        className="w-full rounded-xl bg-gradient-to-r from-red-650 to-red-750 py-2.5 text-xs font-bold text-white hover:from-red-550 hover:to-red-650 transition-all disabled:opacity-40 shadow-md active:scale-95 mt-1"
+      >
+        Save Combo to Schedule
+      </button>
+    </div>
+  );
+}
+
 export default function FeedbackPanel({
   feedback,
   movement,
@@ -152,6 +278,11 @@ export default function FeedbackPanel({
   comboFeedbackText: _comboFeedbackText,
   startNextCombo,
   COMBOS,
+  onAddCustomCombo,
+  onDeleteCustomCombo,
+  voiceCommandsEnabled,
+  setVoiceCommandsEnabled,
+  voiceSpeechSupported,
 
   roundModeActive,
   currentRound,
@@ -193,10 +324,127 @@ export default function FeedbackPanel({
 
   const cue = feedback?.activeCues?.[0];
 
+  // Stats aggregation for analytics charts
+  const stats = useMemo(() => {
+    let punches = 0;
+    let elbows = 0;
+    let knees = 0;
+    let kicks = 0;
+    let totalReps = 0;
+    let avgSpeedSum = 0;
+    let avgSpeedCount = 0;
+    let totalHold = 0;
+    let combosCompleted = 0;
+
+    history.forEach((log) => {
+      if (log.movementId === 'muaythai-combo') {
+        combosCompleted += 1;
+        return;
+      }
+      if (log.reps !== undefined) {
+        totalReps += log.reps;
+        const id = log.movementId;
+        if (['jab', 'cross', 'left-hook', 'right-hook'].includes(id)) {
+          punches += log.reps;
+        } else if (['left-elbow', 'right-elbow'].includes(id)) {
+          elbows += log.reps;
+        } else if (['left-knee', 'knee'].includes(id)) {
+          knees += log.reps;
+        } else if (['teep', 'right-teep', 'left-kick', 'right-kick'].includes(id)) {
+          kicks += log.reps;
+        }
+      }
+      if (log.peakSpeed !== undefined && log.peakSpeed > 0) {
+        avgSpeedSum += log.peakSpeed;
+        avgSpeedCount += 1;
+      }
+      if (log.holdTime !== undefined) {
+        totalHold += log.holdTime;
+      }
+    });
+
+    const avgSpeed = avgSpeedCount > 0 ? Math.round(avgSpeedSum / avgSpeedCount) : 0;
+
+    return {
+      punches,
+      elbows,
+      knees,
+      kicks,
+      totalReps,
+      avgSpeed,
+      totalHold,
+      combosCompleted,
+    };
+  }, [history]);
+
+  const donutSegments = useMemo(() => {
+    const total = stats.punches + stats.elbows + stats.knees + stats.kicks;
+    if (total === 0) return [];
+
+    const data = [
+      { name: 'Punches', value: stats.punches, color: '#f59e0b' },
+      { name: 'Elbows', value: stats.elbows, color: '#06b6d4' },
+      { name: 'Knees', value: stats.knees, color: '#10b981' },
+      { name: 'Kicks', value: stats.kicks, color: '#6366f1' },
+    ].filter((d) => d.value > 0);
+
+    const circumference = 314.16; // 2 * PI * 50
+    let accumulatedPercent = 0;
+
+    return data.map((d) => {
+      const percent = d.value / total;
+      const strokeLength = circumference * percent;
+      const strokeOffset = circumference - strokeLength + circumference * accumulatedPercent;
+      accumulatedPercent += percent;
+      return {
+        ...d,
+        percent: Math.round(percent * 100),
+        strokeLength,
+        strokeOffset,
+      };
+    });
+  }, [stats]);
+
+  const velocityTrend = useMemo(() => {
+    const speedLogs = history
+      .filter((log) => log.peakSpeed !== undefined && log.peakSpeed > 0)
+      .slice(0, 10)
+      .reverse();
+
+    if (speedLogs.length < 2) return null;
+
+    const speeds = speedLogs.map((log) => log.peakSpeed as number);
+    const minSpeed = Math.min(...speeds) * 0.9;
+    const maxSpeed = Math.max(...speeds) * 1.1;
+    const speedRange = maxSpeed - minSpeed;
+
+    const width = 240;
+    const height = 80;
+    const padding = 10;
+
+    const points = speedLogs.map((log, idx) => {
+      const x = padding + (idx / (speedLogs.length - 1)) * (width - 2 * padding);
+      const val = log.peakSpeed as number;
+      const y = height - padding - ((val - minSpeed) / (speedRange || 1)) * (height - 2 * padding);
+      return { x, y, speed: val };
+    });
+
+    const pathData = points.reduce((acc, p, idx) => {
+      return idx === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
+    }, '');
+
+    return {
+      points,
+      pathData,
+      width,
+      height,
+    };
+  }, [history]);
+
   return (
     <div className="flex flex-col gap-5">
       {/* Mode Selector Tabs */}
-      <div className="flex rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-1.5 shadow-md">
+      <div className="flex rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-1.5 shadow-md gap-1">
         <button
           type="button"
           onClick={() => setWorkoutMode('practice')}
@@ -206,7 +454,7 @@ export default function FeedbackPanel({
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Single Stance (Practice)
+          Single Practice
         </button>
         <button
           type="button"
@@ -221,7 +469,18 @@ export default function FeedbackPanel({
           }`}
         >
           <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-ping" />
-          Combo Coach (Pad Work)
+          Combo Coach
+        </button>
+        <button
+          type="button"
+          onClick={() => setWorkoutMode('analytics')}
+          className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all ${
+            workoutMode === 'analytics'
+              ? 'bg-zinc-900 text-white shadow'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          Analytics
         </button>
       </div>
 
@@ -440,7 +699,29 @@ export default function FeedbackPanel({
                 />
               </label>
             </div>
+
+            {voiceSpeechSupported && (
+              <label htmlFor="voice-commands-combos" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all mt-3">
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                    Hands-Free Voice Controls
+                  </span>
+                  <span className="text-[10px] text-zinc-500 font-medium mt-0.5">Say: "Coach, next", "Coach, start", or "Coach, stop"</span>
+                </div>
+                <input
+                  id="voice-commands-combos"
+                  type="checkbox"
+                  checked={voiceCommandsEnabled}
+                  onChange={(e) => setVoiceCommandsEnabled(e.target.checked)}
+                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
+                />
+              </label>
+            )}
           </div>
+
+          {/* Combo Builder Panel */}
+          <ComboBuilder onAddCustomCombo={onAddCustomCombo} getStrikeName={getStrikeName} />
 
           {/* Pad Combos Selection Grid */}
           <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
@@ -449,22 +730,39 @@ export default function FeedbackPanel({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {COMBOS.map((combo, idx) => {
                 const isActive = idx === activeComboIndex;
+                const isCustom = idx >= 14; // Default count is 14
                 return (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => startNextCombo(idx)}
-                    className={`text-left rounded-xl p-3 border transition-all text-xs flex flex-col justify-between ${
-                      isActive
-                        ? 'bg-amber-600/10 border-amber-500/40 text-amber-300 shadow-md shadow-amber-500/5'
-                        : 'bg-zinc-950/30 border-zinc-900/60 text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/40 hover:text-zinc-200'
-                    }`}
-                  >
-                    <span className="font-extrabold">{combo.name}</span>
-                    <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wide truncate">
-                      {combo.sequence.join(' - ')}
-                    </span>
-                  </button>
+                  <div key={idx} className="relative group/item">
+                    <button
+                      type="button"
+                      onClick={() => startNextCombo(idx)}
+                      className={`w-full text-left rounded-xl p-3 border transition-all text-xs flex flex-col justify-between ${
+                        isActive
+                          ? 'bg-amber-600/10 border-amber-500/40 text-amber-300 shadow-md shadow-amber-500/5'
+                          : 'bg-zinc-950/30 border-zinc-900/60 text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/40 hover:text-zinc-200'
+                      }`}
+                    >
+                      <span className="font-extrabold pr-6">{combo.name}</span>
+                      <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wide truncate">
+                        {combo.sequence.join(' - ')}
+                      </span>
+                    </button>
+                    {isCustom && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteCustomCombo(idx);
+                        }}
+                        className="absolute right-2.5 top-2.5 p-1 text-zinc-600 hover:text-rose-400 rounded-lg hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition-all opacity-0 group-hover/item:opacity-100"
+                        title="Delete Custom Combo"
+                      >
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -640,6 +938,168 @@ export default function FeedbackPanel({
             </div>
           )}
         </>
+      )}
+
+      {/* --- DETAILED ANALYTICS VIEW --- */}
+      {workoutMode === 'analytics' && (
+        <div className="flex flex-col gap-5">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-2 gap-3.5">
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Total Reps</span>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {stats.totalReps}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-medium">Strikes</span>
+              </div>
+            </div>
+            
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Avg Strike Speed</span>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {stats.avgSpeed}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-mono">°/s</span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Guard Held</span>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {stats.totalHold}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-medium">sec</span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Pad Combos Hit</span>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white tracking-tight tabular-nums">
+                  {stats.combosCompleted}
+                </span>
+                <span className="text-[10px] text-zinc-500 font-medium">Done</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Donut Chart: Strike Split */}
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg flex flex-col sm:flex-row items-center gap-5 justify-between relative overflow-hidden">
+            <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-600/5 rounded-full filter blur-2xl pointer-events-none" />
+            <div className="flex-1 w-full">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Distribution analysis</span>
+              <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Strike Type Proportions</h3>
+              {donutSegments.length === 0 ? (
+                <p className="text-zinc-500 text-xs">No strike data recorded yet. Switch to Single Practice or Combos and start training!</p>
+              ) : (
+                <div className="flex flex-col gap-2.5">
+                  {donutSegments.map((seg, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                      <span className="text-zinc-400 font-semibold">{seg.name}:</span>
+                      <span className="font-bold text-zinc-250 font-mono">{seg.percent}%</span>
+                      <span className="text-[10px] text-zinc-650 font-normal">({seg.value} hits)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {donutSegments.length > 0 && (
+              <div className="relative flex items-center justify-center shrink-0">
+                <svg width="120" height="120" viewBox="0 0 120 120" className="transform -rotate-90">
+                  <circle cx="60" cy="60" r="50" fill="transparent" stroke="#18181b" strokeWidth="12" />
+                  {donutSegments.map((seg, i) => (
+                    <circle
+                      key={i}
+                      cx="60"
+                      cy="60"
+                      r="50"
+                      fill="transparent"
+                      stroke={seg.color}
+                      strokeWidth="12"
+                      strokeDasharray="314.16"
+                      strokeDashoffset={seg.strokeOffset}
+                      strokeLinecap="butt"
+                      className="transition-all duration-500 ease-out"
+                    />
+                  ))}
+                </svg>
+                <div className="absolute flex flex-col items-center justify-center">
+                  <span className="text-[9px] font-bold uppercase text-zinc-500 font-mono">Total</span>
+                  <span className="text-lg font-black text-white">{stats.totalReps}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Line Chart: Velocity Progress */}
+          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
+            <div className="absolute right-0 top-0 w-32 h-32 bg-amber-600/5 rounded-full filter blur-2xl pointer-events-none" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Speed Progression</span>
+            <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-4">Peak Velocity Trend (Last 10 sets)</h3>
+            
+            {!velocityTrend ? (
+              <div className="text-zinc-550 text-xs py-4 text-center italic">
+                Need at least 2 recorded speed-tracked sets to trace speed progression.
+              </div>
+            ) : (
+              <div className="w-full h-[95px] flex items-center justify-center pr-3">
+                <svg width="100%" height="80" viewBox="0 0 240 80" className="overflow-visible">
+                  {/* Grid lines */}
+                  <line x1="0" y1="10" x2="240" y2="10" stroke="#27272a" strokeWidth="0.5" strokeDasharray="2,2" />
+                  <line x1="0" y1="40" x2="240" y2="40" stroke="#27272a" strokeWidth="0.5" strokeDasharray="2,2" />
+                  <line x1="0" y1="70" x2="240" y2="70" stroke="#27272a" strokeWidth="0.5" strokeDasharray="2,2" />
+
+                  {/* The Line */}
+                  <path
+                    d={velocityTrend.pathData}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+
+                  {/* Points */}
+                  {velocityTrend.points.map((p, idx) => (
+                    <g key={idx} className="group/dot cursor-pointer">
+                      <circle
+                        cx={p.x}
+                        cy={p.y}
+                        r="3.5"
+                        fill="#09090b"
+                        stroke="#f59e0b"
+                        strokeWidth="1.5"
+                      />
+                      <circle
+                        cx={p.x}
+                        cy={p.y}
+                        r="6"
+                        fill="transparent"
+                        className="hover:fill-amber-500/10 transition-colors"
+                      />
+                      <text
+                        x={p.x}
+                        y={p.y - 8}
+                        textAnchor="middle"
+                        fill="#f4f4f5"
+                        fontSize="7"
+                        fontWeight="extrabold"
+                        className="opacity-0 group-hover/dot:opacity-100 transition-opacity duration-200 pointer-events-none fill-zinc-100 font-mono filter drop-shadow"
+                      >
+                        {Math.round(p.speed)}°/s
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* --- WORKOUT LOG HISTORY (SHARED) --- */}

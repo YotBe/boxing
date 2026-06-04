@@ -49,9 +49,9 @@ interface WorkoutLog {
   holdTime?: number;
 }
 
-type WorkoutMode = 'practice' | 'combos';
+type WorkoutMode = 'practice' | 'combos' | 'analytics';
 
-const COMBOS = [
+const DEFAULT_COMBOS = [
   { name: '1-2 Punch (Jab-Cross)', sequence: ['jab', 'cross'] },
   { name: 'Double Jab', sequence: ['jab', 'jab'] },
   { name: 'Knee Strike', sequence: ['knee'] },
@@ -105,6 +105,133 @@ export default function App() {
   // Sound settings
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Combos list state
+  const [combos, setCombos] = useState(() => {
+    try {
+      const raw = localStorage.getItem('pose-coach:custom-combos');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return [...DEFAULT_COMBOS, ...parsed];
+      }
+    } catch (e) {
+      console.warn('Failed to load custom combos:', e);
+    }
+    return DEFAULT_COMBOS;
+  });
+
+  const combosRef = useRef(combos);
+  combosRef.current = combos;
+
+  // Add and Delete callbacks for Custom Combo Builder
+  const handleAddCustomCombo = (name: string, sequence: string[]) => {
+    const newCombo = { name, sequence };
+    setCombos((prev) => {
+      const next = [...prev, newCombo];
+      try {
+        const raw = localStorage.getItem('pose-coach:custom-combos');
+        const custom = raw ? JSON.parse(raw) : [];
+        localStorage.setItem('pose-coach:custom-combos', JSON.stringify([...custom, newCombo]));
+      } catch (e) {
+        console.warn('Failed to save custom combo:', e);
+      }
+      return next;
+    });
+  };
+
+  const handleDeleteCustomCombo = (indexInCombos: number) => {
+    setCombos((prev) => {
+      const defaultCount = DEFAULT_COMBOS.length;
+      const customIndex = indexInCombos - defaultCount;
+      if (customIndex < 0) return prev; // Cannot delete system defaults
+
+      const next = prev.filter((_, idx) => idx !== indexInCombos);
+      try {
+        const raw = localStorage.getItem('pose-coach:custom-combos');
+        if (raw) {
+          const custom = JSON.parse(raw);
+          const nextCustom = custom.filter((_: any, idx: number) => idx !== customIndex);
+          localStorage.setItem('pose-coach:custom-combos', JSON.stringify(nextCustom));
+        }
+      } catch (e) {
+        console.warn('Failed to delete custom combo:', e);
+      }
+
+      // Safeguard current selection bounds
+      if (activeComboIndex >= next.length) {
+        setActiveComboIndex(Math.max(0, next.length - 1));
+      }
+      return next;
+    });
+  };
+
+  // Voice Recognition Web Speech Integration
+  const [voiceCommandsEnabled, setVoiceCommandsEnabled] = useState(false);
+
+  const triggerToggleRoundRef = useRef<() => void>(() => {});
+  const triggerNextComboRef = useRef<() => void>(() => {});
+  const triggerStopRoundRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!voiceCommandsEnabled) return;
+
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      console.warn('SpeechRecognition not supported in this browser environment.');
+      return;
+    }
+
+    const recognition = new SpeechRec();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    let isAlive = true;
+
+    recognition.onresult = (event: any) => {
+      const result = event.results[event.results.length - 1];
+      if (!result.isFinal) return;
+      const speechText = result[0].transcript.trim().toLowerCase();
+      console.log('Recognized speech text:', speechText);
+
+      if (speechText.includes('coach')) {
+        if (speechText.includes('start') || speechText.includes('fight') || speechText.includes('go')) {
+          triggerToggleRoundRef.current();
+        } else if (speechText.includes('next') || speechText.includes('skip')) {
+          triggerNextComboRef.current();
+        } else if (speechText.includes('pause') || speechText.includes('stop') || speechText.includes('hold')) {
+          triggerStopRoundRef.current();
+        }
+      }
+    };
+
+    recognition.onerror = (e: any) => {
+      console.warn('Speech recognition encountered error:', e.error);
+    };
+
+    recognition.onend = () => {
+      if (isAlive && voiceCommandsEnabled) {
+        try {
+          recognition.start();
+        } catch (e) {
+          console.warn('Failed restarting speech recognition:', e);
+        }
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.warn('Failed starting speech recognition:', e);
+    }
+
+    return () => {
+      isAlive = false;
+      try {
+        recognition.stop();
+      } catch (e) {}
+    };
+  }, [voiceCommandsEnabled]);
 
   // Shared lazy AudioContext generator to prevent leak/crash
   const getAudioContext = (): AudioContext | null => {
@@ -361,6 +488,23 @@ export default function App() {
       }
     }
   }
+
+  // Voice Command Trigger Assignments
+  triggerToggleRoundRef.current = () => {
+    handleToggleRoundSession();
+  };
+
+  triggerNextComboRef.current = () => {
+    if (workoutMode === 'combos') {
+      startNextCombo();
+    }
+  };
+
+  triggerStopRoundRef.current = () => {
+    if (roundModeActive) {
+      handleToggleRoundSession();
+    }
+  };
 
   function clearTimers() {
     timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -678,7 +822,8 @@ export default function App() {
         
         // --- COMBO COACH (PAD WORK) ---
         else if (workoutMode === 'combos' && comboStatus === 'waiting') {
-          const combo = COMBOS[activeComboIndex];
+          const combo = combosRef.current[activeComboIndex];
+          if (!combo) return;
           const expectedStrikeId = combo.sequence[comboStepIndex];
           const strikeMov = movements.find((m) => m.id === expectedStrikeId);
           
@@ -773,7 +918,7 @@ export default function App() {
     if (forceIndex !== undefined) {
       nextIndex = forceIndex;
     } else {
-      nextIndex = (activeComboIndex + 1) % COMBOS.length;
+      nextIndex = (activeComboIndex + 1) % combosRef.current.length;
     }
     
     setActiveComboIndex(nextIndex);
@@ -782,9 +927,10 @@ export default function App() {
     setComboFeedbackText('');
     lastRepsCountRef.current = 0;
     
-    const nextCombo = COMBOS[nextIndex];
+    const nextCombo = combosRef.current[nextIndex];
+    if (!nextCombo) return;
     // Reset expected trackers
-    nextCombo.sequence.forEach(strikeId => {
+    nextCombo.sequence.forEach((strikeId: string) => {
       trackersRef.current[strikeId]?.reset();
     });
     
@@ -974,10 +1120,10 @@ export default function App() {
                   STRIKE TARGET
                 </span>
                 <span className="text-3xl md:text-5xl font-black text-amber-300 tracking-tight drop-shadow-[0_4px_12px_rgba(245,158,11,0.5)] uppercase animate-pulse">
-                  {movements.find(m => m.id === COMBOS[activeComboIndex].sequence[comboStepIndex])?.name ?? COMBOS[activeComboIndex].sequence[comboStepIndex]}
+                  {movements.find(m => m.id === combos[activeComboIndex]?.sequence[comboStepIndex])?.name ?? combos[activeComboIndex]?.sequence[comboStepIndex]}
                 </span>
                 <div className="flex gap-1.5 mt-2 bg-black/50 px-3.5 py-2 rounded-2xl border border-zinc-800/60 backdrop-blur-md">
-                  {COMBOS[activeComboIndex].sequence.map((strikeId, i) => {
+                  {combos[activeComboIndex]?.sequence.map((strikeId: string, i: number) => {
                     const strikeLabel = movements.find(m => m.id === strikeId)?.name ?? strikeId;
                     const isPassed = i < comboStepIndex;
                     const isCurrent = i === comboStepIndex;
@@ -1149,7 +1295,12 @@ export default function App() {
             comboStatus={comboStatus}
             comboFeedbackText={comboFeedbackText}
             startNextCombo={startNextCombo}
-            COMBOS={COMBOS}
+            COMBOS={combos}
+            onAddCustomCombo={handleAddCustomCombo}
+            onDeleteCustomCombo={handleDeleteCustomCombo}
+            voiceCommandsEnabled={voiceCommandsEnabled}
+            setVoiceCommandsEnabled={setVoiceCommandsEnabled}
+            voiceSpeechSupported={!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)}
             
             // Round structures
             roundModeActive={roundModeActive}
