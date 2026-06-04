@@ -75,15 +75,37 @@ export default function App() {
   // (3D) landmarks drive the angle evaluation.
   const imgSmootherRef = useRef(createSmoother(0.5));
   const worldSmootherRef = useRef(createSmoother(0.5));
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
+  // Camera devices selection
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+
   // Sound settings
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Shared lazy AudioContext generator to prevent leak/crash
+  const getAudioContext = (): AudioContext | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      return audioCtxRef.current;
+    } catch (err) {
+      console.warn('Failed to initialize AudioContext:', err);
+      return null;
+    }
+  };
 
   // Mode Selection
   const [workoutMode, setWorkoutMode] = useState<WorkoutMode>('practice');
@@ -326,7 +348,8 @@ export default function App() {
   function playBoxingBell(times = 1) {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
       
       const triggerBell = (delay: number) => {
         const osc1 = ctx.createOscillator();
@@ -363,7 +386,8 @@ export default function App() {
   function playLeatherPadHit() {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
       
       // 1. Low Thump (Triangle sweep)
       const thumpOsc = ctx.createOscillator();
@@ -414,7 +438,9 @@ export default function App() {
   function playComboSuccessSound() {
     if (!soundEnabled) return;
     try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -497,6 +523,44 @@ export default function App() {
       detectorRef.current = null;
     };
   }, []);
+
+  // Enumerate active camera devices when camera is ready
+  useEffect(() => {
+    async function updateDevices() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+        setCameraDevices(videoDevices);
+        if (videoDevices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(videoDevices[0].deviceId);
+        }
+      } catch (err) {
+        console.warn('enumerateDevices failed:', err);
+      }
+    }
+
+    updateDevices();
+
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', updateDevices);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
+      };
+    }
+  }, [cameraReady, selectedCameraId]);
+
+  // Compute camera view container ring/glow styles for round phases
+  const containerRingClass = useMemo(() => {
+    if (!roundModeActive) return 'border-zinc-800/80 ring-0';
+    if (roundPhase === 'work') {
+      return 'border-red-500/50 ring-4 ring-red-500/20 shadow-[0_0_24px_rgba(239,68,68,0.15)] animate-pulse';
+    }
+    if (roundPhase === 'rest') {
+      return 'border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-[0_0_24px_rgba(16,185,129,0.15)]';
+    }
+    return 'border-zinc-800/80 ring-0';
+  }, [roundModeActive, roundPhase]);
 
   // Drive the realtime loop once camera + detector are both ready.
   useEffect(() => {
@@ -838,12 +902,13 @@ export default function App() {
       </header>
 
       {/* Two-Column Responsive Dashboard Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Camera View (Main screen) */}
         <div className="lg:col-span-7 flex flex-col gap-4">
-          <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-zinc-800/80 bg-zinc-950/60 shadow-2xl group">
+          <div className={`relative aspect-video w-full overflow-hidden rounded-3xl border bg-zinc-950/60 shadow-2xl group transition-all duration-500 ${containerRingClass}`}>
             <CameraView
               videoRef={videoRef}
+              selectedCameraId={selectedCameraId}
               onReady={() => setCameraReady(true)}
               onError={setError}
             />
@@ -988,7 +1053,7 @@ export default function App() {
         </div>
 
         {/* Right Column: Sidebar Dashboard (Movement select + Stats + history) */}
-        <div className="lg:col-span-5 flex flex-col gap-6">
+        <aside className="lg:col-span-5 flex flex-col gap-6">
           {/* Movement Selection (Only shown in single movement practice) */}
           {workoutMode === 'practice' && (
             <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/20 backdrop-blur-md p-5 shadow-xl">
@@ -1062,9 +1127,14 @@ export default function App() {
             restDurationSec={restDurationSec}
             setRestDurationSec={setRestDurationSec}
             onToggleRoundSession={handleToggleRoundSession}
+
+            // Camera settings
+            cameraDevices={cameraDevices}
+            selectedCameraId={selectedCameraId}
+            setSelectedCameraId={setSelectedCameraId}
           />
-        </div>
-      </div>
+        </aside>
+      </main>
     </div>
   );
 }

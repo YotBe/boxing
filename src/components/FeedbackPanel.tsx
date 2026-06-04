@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { Feedback, MovementDefinition } from '../engine/types';
 
 interface WorkoutLog {
@@ -47,6 +48,11 @@ interface FeedbackPanelProps {
   restDurationSec: number;
   setRestDurationSec: (r: number) => void;
   onToggleRoundSession: () => void;
+
+  // Camera settings
+  cameraDevices: MediaDeviceInfo[];
+  selectedCameraId: string;
+  setSelectedCameraId: (id: string) => void;
 }
 
 interface AngleProgressBarProps {
@@ -59,6 +65,25 @@ interface AngleProgressBarProps {
 }
 
 function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleProgressBarProps) {
+  const directionPrompt = useMemo(() => {
+    if (inRange || !available || Number.isNaN(angle)) return null;
+    if (angle < min) {
+      return (
+        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-0.5 animate-pulse">
+          Extend ⬆
+        </span>
+      );
+    }
+    if (angle > max) {
+      return (
+        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-0.5 animate-pulse">
+          Flex ⬇
+        </span>
+      );
+    }
+    return null;
+  }, [angle, min, max, inRange, available]);
+
   if (!available || Number.isNaN(angle)) {
     return (
       <div className="flex flex-col gap-1 rounded-xl bg-zinc-900/30 p-3 border border-zinc-800/40">
@@ -78,7 +103,10 @@ function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleP
   return (
     <div className="flex flex-col gap-1.5 rounded-xl bg-zinc-900/50 p-3 border border-zinc-800/60 hover:border-zinc-700/80 transition-all duration-200">
       <div className="flex justify-between items-center text-xs">
-        <span className="text-zinc-300 font-medium">{label}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-300 font-medium">{label}</span>
+          {directionPrompt}
+        </div>
         <span className={`font-mono text-xs font-semibold ${inRange ? 'text-emerald-400' : 'text-rose-400'}`}>
           {Math.round(angle)}° <span className="text-zinc-500 font-normal">({min}°-{max}°)</span>
         </span>
@@ -136,6 +164,10 @@ export default function FeedbackPanel({
   restDurationSec,
   setRestDurationSec,
   onToggleRoundSession,
+
+  cameraDevices,
+  selectedCameraId,
+  setSelectedCameraId,
 }: FeedbackPanelProps) {
   const getStrikeName = (id: string) => {
     if (id === 'jab') return 'Left Jab';
@@ -185,6 +217,31 @@ export default function FeedbackPanel({
         </button>
       </div>
 
+      {/* Camera Input Device Selector */}
+      {cameraDevices.length > 0 && (
+        <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col gap-2">
+          <div className="flex justify-between items-center">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Active Device</span>
+            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded bg-zinc-800/55 text-zinc-400 border border-zinc-850 uppercase">Webcam</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="camera-select" className="sr-only">Select Video Input Device</label>
+            <select
+              id="camera-select"
+              value={selectedCameraId}
+              onChange={(e) => setSelectedCameraId(e.target.value)}
+              className="w-full rounded-xl bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 p-2.5 outline-none focus:border-zinc-600 transition-all font-medium cursor-pointer"
+            >
+              {cameraDevices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Camera ${device.deviceId.slice(0, 5)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* --- ROUNDS WORKOUT TIMER CARD --- */}
       <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
         <div className="absolute right-0 top-0 w-32 h-32 bg-red-600/5 rounded-full filter blur-2xl pointer-events-none" />
@@ -211,11 +268,12 @@ export default function FeedbackPanel({
             <div className="grid grid-cols-3 gap-2.5">
               {/* Rounds config */}
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rounds</span>
+                <label htmlFor="round-count-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Rounds</label>
                 <select
+                  id="round-count-select"
                   value={roundCount}
                   onChange={(e) => setRoundCount(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
                 >
                   {[1, 2, 3, 4, 5].map((r) => (
                     <option key={r} value={r}>{r} Rnd</option>
@@ -225,11 +283,12 @@ export default function FeedbackPanel({
 
               {/* Work duration config */}
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Work Time</span>
+                <label htmlFor="work-time-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Work Time</label>
                 <select
+                  id="work-time-select"
                   value={roundDurationSec}
                   onChange={(e) => setRoundDurationSec(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
                 >
                   <option value={30}>30s</option>
                   <option value={60}>1:00</option>
@@ -241,11 +300,12 @@ export default function FeedbackPanel({
 
               {/* Rest duration config */}
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-semibold text-zinc-500 uppercase">Rest Time</span>
+                <label htmlFor="rest-time-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Rest Time</label>
                 <select
+                  id="rest-time-select"
                   value={restDurationSec}
                   onChange={(e) => setRestDurationSec(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none"
+                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
                 >
                   <option value={15}>15s</option>
                   <option value={30}>30s</option>
@@ -350,23 +410,25 @@ export default function FeedbackPanel({
           <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
             <div className="grid grid-cols-2 gap-3 mt-3">
-              <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+              <label htmlFor="trainer-voice-combos" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
                 <span className="text-xs font-semibold text-zinc-300">Trainer Voice</span>
                 <input
+                  id="trainer-voice-combos"
                   type="checkbox"
                   checked={voiceEnabled}
                   onChange={(e) => setVoiceEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
                 />
               </label>
 
-              <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+              <label htmlFor="target-chimes-combos" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
                 <span className="text-xs font-semibold text-zinc-300">Target Chimes</span>
                 <input
+                  id="target-chimes-combos"
                   type="checkbox"
                   checked={soundEnabled}
                   onChange={(e) => setSoundEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
                 />
               </label>
             </div>
@@ -515,29 +577,31 @@ export default function FeedbackPanel({
               </div>
 
               <div className="mt-4 flex flex-col gap-3">
-                <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+                <label htmlFor="trainer-voice-practice" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
                   <div className="flex flex-col">
                     <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
                     <span className="text-[10px] text-zinc-500">Speak form corrections</span>
                   </div>
                   <input
+                    id="trainer-voice-practice"
                     type="checkbox"
                     checked={voiceEnabled}
                     onChange={(e) => setVoiceEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
                   />
                 </label>
 
-                <label className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
+                <label htmlFor="target-chimes-practice" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
                   <div className="flex flex-col">
                     <span className="text-xs font-semibold text-zinc-300">Hit Chimes</span>
                     <span className="text-[10px] text-zinc-500">Sound on clean strikes</span>
                   </div>
                   <input
+                    id="target-chimes-practice"
                     type="checkbox"
                     checked={soundEnabled}
                     onChange={(e) => setSoundEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4"
+                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
                   />
                 </label>
               </div>
