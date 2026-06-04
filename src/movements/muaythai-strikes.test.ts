@@ -9,6 +9,8 @@ import leftElbowJson from './left-elbow.json';
 import rightHookJson from './right-hook.json';
 import leftKneeJson from './left-knee.json';
 import rightTeepJson from './right-teep.json';
+import leftKickJson from './left-kick.json';
+import rightKickJson from './right-kick.json';
 
 const jab = jabJson as unknown as MovementDefinition;
 const knee = kneeJson as unknown as MovementDefinition;
@@ -18,6 +20,8 @@ const leftElbow = leftElbowJson as unknown as MovementDefinition;
 const rightHook = rightHookJson as unknown as MovementDefinition;
 const leftKnee = leftKneeJson as unknown as MovementDefinition;
 const rightTeep = rightTeepJson as unknown as MovementDefinition;
+const leftKick = leftKickJson as unknown as MovementDefinition;
+const rightKick = rightKickJson as unknown as MovementDefinition;
 
 function frame(parts: Record<number, [number, number]>): Landmark[] {
   const ls: Landmark[] = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
@@ -127,6 +131,34 @@ describe('Muay Thai Strike Evaluations', () => {
         28: [0.6, 0.9], // right ankle
       }),
       rightTeep
+    );
+    expect(fb.tracked).toBe(true);
+    expect(fb.ok).toBe(true);
+  });
+
+  it('evaluates left roundhouse kick hip and knee angles', () => {
+    const fb = evaluate(
+      frame({
+        11: [0.4, 0.3], // left shoulder
+        23: [0.4, 0.6], // left hip
+        25: [0.25, 0.6], // left knee (perpendicular hip = 90 deg)
+        27: [0.1, 0.6], // left ankle (extended knee = 180 deg)
+      }),
+      leftKick
+    );
+    expect(fb.tracked).toBe(true);
+    expect(fb.ok).toBe(true);
+  });
+
+  it('evaluates right roundhouse kick hip and knee angles', () => {
+    const fb = evaluate(
+      frame({
+        12: [0.6, 0.3], // right shoulder
+        24: [0.6, 0.6], // right hip
+        26: [0.75, 0.6], // right knee (perpendicular hip = 90 deg)
+        28: [0.9, 0.6], // right ankle (extended knee = 180 deg)
+      }),
+      rightKick
     );
     expect(fb.tracked).toBe(true);
     expect(fb.ok).toBe(true);

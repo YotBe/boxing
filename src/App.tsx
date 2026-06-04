@@ -64,6 +64,8 @@ const COMBOS = [
   { name: 'Hook & Cross (Right Hook-Left Hook-Cross)', sequence: ['right-hook', 'left-hook', 'cross'] },
   { name: 'Double Teep (Left-Right Teep)', sequence: ['teep', 'right-teep'] },
   { name: 'Golden Kick (Jab-Cross-Left Knee-Right Knee)', sequence: ['jab', 'cross', 'left-knee', 'knee'] },
+  { name: 'Thai Kick Boxing (Jab-Cross-Right Kick)', sequence: ['jab', 'cross', 'right-kick'] },
+  { name: 'Champion Flow (Jab-Left Kick-Right Hook-Left Knee)', sequence: ['jab', 'left-kick', 'right-hook', 'left-knee'] },
 ];
 
 const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
@@ -77,6 +79,8 @@ const STRIKE_FX_MAP: Record<string, { index: number; color: string }> = {
   'right-hook': { index: 16, color: 'rgb(168, 85, 247)' }, // Right Wrist, Purple
   'left-knee': { index: 25, color: 'rgb(16, 185, 129)' }, // Left Knee, Emerald
   'right-teep': { index: 28, color: 'rgb(99, 102, 241)' }, // Right Ankle, Indigo
+  'left-kick': { index: 27, color: 'rgb(239, 68, 68)' }, // Left Ankle, Red
+  'right-kick': { index: 28, color: 'rgb(239, 68, 68)' }, // Right Ankle, Red
 };
 
 export default function App() {
@@ -227,6 +231,8 @@ export default function App() {
       'right-hook': createDynamicTracker(),
       'left-knee': createDynamicTracker(),
       'right-teep': createDynamicTracker(),
+      'left-kick': createDynamicTracker(),
+      'right-kick': createDynamicTracker(),
     };
   }, []);
 

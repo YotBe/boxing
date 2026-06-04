@@ -1,0 +1,39 @@
+{
+  "id": "left-kick",
+  "name": "Left Roundhouse Kick",
+  "joints": [
+    {
+      "id": "left_kick_hip",
+      "label": "Left Hip Flexion",
+      "points": [11, 23, 25],
+      "targetMin": 60,
+      "targetMax": 140
+    },
+    {
+      "id": "left_kick_knee",
+      "label": "Left Knee Extension",
+      "points": [23, 25, 27],
+      "targetMin": 130,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_kick_hip",
+      "when": "above",
+      "cue": "Chamber your leg and swing your hip through to kick."
+    },
+    {
+      "jointId": "left_kick_knee",
+      "when": "below",
+      "cue": "Keep your kicking leg extended at impact."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "left_kick_hip",
+    "enterDownBelow": 120,
+    "enterUpAbove": 160,
+    "countOn": "down",
+    "label": "Left Kicks"
+  }
+}
