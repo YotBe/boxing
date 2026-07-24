@@ -1,12 +1,23 @@
-# Muay Thai Guard Coach
+# Nak Muay Coach
 
-A **real-time Muay Thai guard coach** that runs entirely in the browser. Point your webcam at
-yourself, hold your guard, and get live form feedback: it checks that **both hands stay up by
-your face** and **both arms stay bent**, and tells you exactly what to fix.
+A **real-time AI Muay Thai trainer** that runs entirely in the browser. Point your webcam at
+yourself and train:
+
+- **Practice mode** — hold the guard or drill a single strike (jabs, crosses, hooks, elbows,
+  knees, teeps, roundhouse kicks) with live form feedback, rep counting, and strike-speed
+  tracking.
+- **Combo Coach (pad work)** — the voice coach calls combinations ("Jab! Cross! Knee!") and
+  detects each strike as you land it, with pad-hit sounds and on-screen shockwaves.
+- **Round timer** — configurable rounds/rest with boxing bells and spoken round announcements.
+- **Session history** — completed sets (reps, top speed, hold time, combos) are logged to
+  `localStorage` on your device.
 
 It **calibrates to you** in one tap — because the "correct" joint angles depend on your body
 proportions and your camera's height/angle, fixed thresholds mis-fire. Strike a good guard,
 press **Calibrate**, and the accepted ranges are set from *your* stance.
+
+**Private by design:** all pose estimation runs on-device. The camera feed never leaves the
+browser — there is no backend and nothing is uploaded.
 
 ## How it works
 
@@ -78,4 +89,6 @@ npm run build      # production build
 ```
 
 **Tech:** Vite + React + TypeScript, `@mediapipe/tasks-vision`, canvas overlay. 100%
-client-side — no backend. The pose model is bundled in `public/models/` (with a CDN fallback).
+client-side — no backend. The pose model is bundled in `public/models/`, and the MediaPipe
+WASM runtime is copied from `node_modules` into the build (see `vite.config.ts`), so the
+deployed app has no runtime CDN dependency — both fall back to hosted copies if missing.
