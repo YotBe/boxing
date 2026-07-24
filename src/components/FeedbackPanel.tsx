@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Feedback, MovementDefinition } from '../engine/types';
+import type { DynamicResult, Feedback, MovementDefinition } from '../engine/types';
 
 interface WorkoutLog {
   id: string;
@@ -15,7 +15,7 @@ interface FeedbackPanelProps {
   feedback: Feedback | null;
   movement: MovementDefinition;
   liveHoldTime: number;
-  dynamicStats: any; // DynamicResult | null
+  dynamicStats: DynamicResult | null;
   voiceEnabled: boolean;
   soundEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;

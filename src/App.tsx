@@ -32,6 +32,15 @@ const CAPTURE_MS = 2000;
 const CALIB_MARGIN_DEG = 15; // padding added around your observed guard/movement angles
 const MIN_CALIB_SAMPLES = 10; // full-visibility frames needed for a valid capture
 
+const HISTORY_KEY = 'pose-coach:history';
+const MAX_HISTORY_ENTRIES = 50;
+
+function makeLogId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).substring(2, 9);
+}
+
 type CalibUi =
   | { phase: 'idle' }
   | { phase: 'countdown'; secondsLeft: number }
@@ -102,9 +111,14 @@ export default function App() {
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
-  // Sound settings
+  // Sound settings. The refs mirror the state so the long-lived rAF loop (whose
+  // effect doesn't restart on toggle) always sees the current value.
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const voiceEnabledRef = useRef(voiceEnabled);
+  voiceEnabledRef.current = voiceEnabled;
+  const soundEnabledRef = useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
 
   // Shared lazy AudioContext generator to prevent leak/crash
   const getAudioContext = (): AudioContext | null => {
@@ -144,9 +158,11 @@ export default function App() {
   const [roundDurationSec, setRoundDurationSec] = useState(120);
   const [restDurationSec, setRestDurationSec] = useState(45);
 
-  // Selected movement (only relevant in practice mode)
+  // Selected movement (only relevant in practice mode). Default to the guard
+  // — the natural starting point — rather than whatever sorts first.
   const [selectedMovementId, setSelectedMovementId] = useState(() => {
-    return movements[0]?.id ?? 'muaythai-guard';
+    const guard = movements.find((m) => m.id === 'muaythai-guard');
+    return guard?.id ?? movements[0]?.id ?? 'muaythai-guard';
   });
 
   const GUARD = useMemo(() => {
@@ -196,12 +212,25 @@ export default function App() {
   // Local storage history
   const [history, setHistory] = useState<WorkoutLog[]>(() => {
     try {
-      const raw = localStorage.getItem('pose-coach:history');
+      const raw = localStorage.getItem(HISTORY_KEY);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
     }
   });
+  // Mirror of `history` readable synchronously (e.g. inside the pagehide
+  // handler, where a setState updater would never get flushed).
+  const historyRef = useRef(history);
+  historyRef.current = history;
+
+  function pushHistoryEntry(entry: WorkoutLog) {
+    const next = [entry, ...historyRef.current].slice(0, MAX_HISTORY_ENTRIES);
+    historyRef.current = next;
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+    } catch {}
+    setHistory(next);
+  }
 
   // Track dynamic tracker state for the tick loop
   useEffect(() => {
@@ -217,68 +246,37 @@ export default function App() {
     setLiveHoldTime(0);
   }, [selectedMovementId]);
 
-  // Initialize trackers map
+  // Initialize one tracker per registered movement, so newly added movement
+  // JSON files are covered without touching this list.
   useEffect(() => {
-    trackersRef.current = {
-      'muaythai-guard': createDynamicTracker(),
-      'jab': createDynamicTracker(),
-      'cross': createDynamicTracker(),
-      'knee': createDynamicTracker(),
-      'teep': createDynamicTracker(),
-      'left-hook': createDynamicTracker(),
-      'right-elbow': createDynamicTracker(),
-      'left-elbow': createDynamicTracker(),
-      'right-hook': createDynamicTracker(),
-      'left-knee': createDynamicTracker(),
-      'right-teep': createDynamicTracker(),
-      'left-kick': createDynamicTracker(),
-      'right-kick': createDynamicTracker(),
-    };
+    const map: Record<string, DynamicTracker> = {};
+    for (const m of movements) map[m.id] = createDynamicTracker();
+    trackersRef.current = map;
   }, []);
 
   // Save current active metrics to history
   function commitSessionToHistory(movId: string, movName: string) {
     if (workoutMode === 'practice') {
       if (movement.dynamics && lastRepsCountRef.current > 0) {
-        const reps = lastRepsCountRef.current;
-        const peakSpeed = dynamicStats?.peakVelocityDegPerSec ?? 0;
-        
-        const newEntry: WorkoutLog = {
-          id: Math.random().toString(36).substring(2, 9),
+        pushHistoryEntry({
+          id: makeLogId(),
           movementId: movId,
           movementName: movName,
           timestamp: new Date().toISOString(),
-          reps,
-          peakSpeed,
-        };
-        
-        setHistory((prev) => {
-          const next = [newEntry, ...prev].slice(0, 50);
-          try {
-            localStorage.setItem('pose-coach:history', JSON.stringify(next));
-          } catch {}
-          return next;
+          reps: lastRepsCountRef.current,
+          peakSpeed: dynamicStats?.peakVelocityDegPerSec ?? 0,
         });
       } else if (!movement.dynamics && totalHoldTimeRef.current > 3) {
-        const holdTime = totalHoldTimeRef.current;
-        const newEntry: WorkoutLog = {
-          id: Math.random().toString(36).substring(2, 9),
+        pushHistoryEntry({
+          id: makeLogId(),
           movementId: movId,
           movementName: movName,
           timestamp: new Date().toISOString(),
-          holdTime: Math.round(holdTime),
-        };
-        
-        setHistory((prev) => {
-          const next = [newEntry, ...prev].slice(0, 50);
-          try {
-            localStorage.setItem('pose-coach:history', JSON.stringify(next));
-          } catch {}
-          return next;
+          holdTime: Math.round(totalHoldTimeRef.current),
         });
       }
     }
-    
+
     // Clear run parameters
     totalHoldTimeRef.current = 0;
     holdStartRef.current = null;
@@ -292,51 +290,67 @@ export default function App() {
     setSelectedMovementId(id);
   }
 
-  // Commit history on page exit
+  // Commit any in-progress practice metrics before switching workout modes,
+  // so reps/hold time aren't silently dropped.
+  function handleSetWorkoutMode(mode: WorkoutMode) {
+    if (mode === workoutMode) return;
+    commitSessionToHistory(movement.id, movement.name);
+    setWorkoutMode(mode);
+  }
+
+  // Commit history on page exit. `pagehide` also covers mobile Safari and
+  // bfcache navigations where `beforeunload` never fires.
   useEffect(() => {
     const handleUnload = () => {
       commitSessionToHistory(movement.id, movement.name);
     };
+    window.addEventListener('pagehide', handleUnload);
     window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
   }, [movement.id, movement.name, dynamicStats, workoutMode]);
 
-  // Round session timer tick state machine
+  // Round session countdown. The updater only decrements — phase transitions
+  // (bells, speech, state changes) live in the effect below, because state
+  // updaters must be pure: React may invoke them more than once per tick,
+  // which used to double-ring bells and skip rounds.
   useEffect(() => {
     if (!roundModeActive) return;
     const interval = setInterval(() => {
-      setRoundTimeLeft((prev) => {
-        if (prev <= 1) {
-          // Phase finished transition
-          if (roundPhase === 'work') {
-            if (currentRound >= roundCount) {
-              // Workout Session Complete
-              playBoxingBell(3);
-              setRoundModeActive(false);
-              setRoundPhase('inactive');
-              speakCue("Workout complete. Excellent job!");
-              return 0;
-            } else {
-              // End of Round work -> Rest
-              playBoxingBell(1);
-              setRoundPhase('rest');
-              speakCue("Round complete. Take a rest!");
-              return restDurationSec;
-            }
-          } else if (roundPhase === 'rest') {
-            // End of Rest -> Next Round work
-            playBoxingBell(2);
-            setCurrentRound((r) => r + 1);
-            setRoundPhase('work');
-            speakCue(`Round ${currentRound + 1}! Fight!`);
-            return roundDurationSec;
-          }
-        }
-        return prev - 1;
-      });
+      setRoundTimeLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [roundModeActive, roundPhase, currentRound, roundCount, roundDurationSec, restDurationSec]);
+  }, [roundModeActive]);
+
+  // Phase transitions when the clock hits zero.
+  useEffect(() => {
+    if (!roundModeActive || roundTimeLeft > 0) return;
+    if (roundPhase === 'work') {
+      if (currentRound >= roundCount) {
+        // Workout Session Complete
+        playBoxingBell(3);
+        setRoundModeActive(false);
+        setRoundPhase('inactive');
+        speakCue('Workout complete. Excellent job!', true);
+      } else {
+        // End of Round work -> Rest
+        playBoxingBell(1);
+        setRoundPhase('rest');
+        setRoundTimeLeft(restDurationSec);
+        speakCue('Round complete. Take a rest!', true);
+      }
+    } else if (roundPhase === 'rest') {
+      // End of Rest -> Next Round work
+      playBoxingBell(2);
+      setCurrentRound((r) => r + 1);
+      setRoundPhase('work');
+      setRoundTimeLeft(roundDurationSec);
+      speakCue(`Round ${currentRound + 1}! Fight!`, true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roundTimeLeft, roundModeActive, roundPhase]);
 
   // Start / stop round workouts
   function handleToggleRoundSession() {
@@ -345,7 +359,7 @@ export default function App() {
       playBoxingBell(3);
       setRoundModeActive(false);
       setRoundPhase('inactive');
-      speakCue("Training session stopped.");
+      speakCue('Training session stopped.', true);
     } else {
       // Initialize workout
       playBoxingBell(2);
@@ -353,7 +367,7 @@ export default function App() {
       setRoundPhase('work');
       setRoundTimeLeft(roundDurationSec);
       setRoundModeActive(true);
-      speakCue("Workout started. Round 1! Fight!");
+      speakCue('Workout started. Round 1! Fight!', true);
       
       // If in combo mode, trigger first combo
       if (workoutMode === 'combos') {
@@ -370,7 +384,7 @@ export default function App() {
 
   // Play boxing ring bell
   function playBoxingBell(times = 1) {
-    if (!soundEnabled) return;
+    if (!soundEnabledRef.current) return;
     try {
       const ctx = getAudioContext();
       if (!ctx) return;
@@ -408,7 +422,7 @@ export default function App() {
 
   // Programmatic Leather Pad Hit Synthesizer (White noise slap + Triangle low sweep thump)
   function playLeatherPadHit() {
-    if (!soundEnabled) return;
+    if (!soundEnabledRef.current) return;
     try {
       const ctx = getAudioContext();
       if (!ctx) return;
@@ -460,7 +474,7 @@ export default function App() {
 
   // Play double chime for completed combo
   function playComboSuccessSound() {
-    if (!soundEnabled) return;
+    if (!soundEnabledRef.current) return;
     try {
       const ctx = getAudioContext();
       if (!ctx) return;
@@ -491,12 +505,13 @@ export default function App() {
     } catch (e) {}
   }
 
-  // Speak correctional cues
-  function speakCue(cue: string) {
-    if (!voiceEnabled) return;
+  // Speak correctional cues. Priority cues (round bells, session start/end)
+  // bypass the throttle so they are never swallowed by a recent form cue.
+  function speakCue(cue: string, priority = false) {
+    if (!voiceEnabledRef.current) return;
     const now = performance.now();
-    if (now - lastSpeechTimeRef.current < 4500) return;
-    
+    if (!priority && now - lastSpeechTimeRef.current < 4500) return;
+
     lastSpeechTimeRef.current = now;
     try {
       window.speechSynthesis.cancel();
@@ -511,7 +526,7 @@ export default function App() {
 
   // Speak fast pad strike callouts
   function speakComboStrike(label: string) {
-    if (!voiceEnabled) return;
+    if (!voiceEnabledRef.current) return;
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(label);
@@ -545,6 +560,11 @@ export default function App() {
       clearTimers();
       detectorRef.current?.close();
       detectorRef.current = null;
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {}
     };
   }, []);
 
@@ -796,18 +816,11 @@ export default function App() {
 
   // Log completed combo to history
   function logComboToHistory(comboName: string) {
-    const newEntry: WorkoutLog = {
-      id: Math.random().toString(36).substring(2, 9),
+    pushHistoryEntry({
+      id: makeLogId(),
       movementId: 'muaythai-combo',
       movementName: comboName,
       timestamp: new Date().toISOString(),
-    };
-    setHistory((prev) => {
-      const next = [newEntry, ...prev].slice(0, 50);
-      try {
-        localStorage.setItem('pose-coach:history', JSON.stringify(next));
-      } catch {}
-      return next;
     });
   }
 
@@ -877,9 +890,10 @@ export default function App() {
   }
 
   function handleClearHistory() {
+    historyRef.current = [];
     setHistory([]);
     try {
-      localStorage.removeItem('pose-coach:history');
+      localStorage.removeItem(HISTORY_KEY);
     } catch {}
   }
 
@@ -1045,8 +1059,19 @@ export default function App() {
             )}
 
             {error && (
-              <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-rose-400 bg-black/80 backdrop-blur-sm font-semibold select-none">
-                {error}
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center bg-black/80 backdrop-blur-sm select-none">
+                <span className="font-semibold text-rose-400">{error}</span>
+                <span className="max-w-sm text-xs text-zinc-400">
+                  Check that your camera is connected and this site has camera
+                  permission, then try again.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-md active:scale-95"
+                >
+                  Retry
+                </button>
               </div>
             )}
           </div>
@@ -1141,7 +1166,7 @@ export default function App() {
             onClearHistory={handleClearHistory}
             onResetReps={handleResetReps}
             workoutMode={workoutMode}
-            setWorkoutMode={setWorkoutMode}
+            setWorkoutMode={handleSetWorkoutMode}
             activeComboIndex={activeComboIndex}
             setActiveComboIndex={setActiveComboIndex}
             comboStepIndex={comboStepIndex}
@@ -1171,6 +1196,18 @@ export default function App() {
           />
         </aside>
       </main>
+
+      <footer className="flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-zinc-900 pt-4 pb-2 text-[11px] text-zinc-500">
+        <span className="flex items-center gap-1.5">
+          <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" />
+          </svg>
+          Private by design — all pose analysis runs on your device. Your camera feed never leaves the browser.
+        </span>
+        <span>
+          Not medical or professional coaching advice. Train safely.
+        </span>
+      </footer>
     </div>
   );
 }

@@ -4,8 +4,12 @@ import {
   type PoseLandmarkerResult,
 } from '@mediapipe/tasks-vision';
 
-const WASM_PATH =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm';
+// Self-hosted WASM runtime (copied from node_modules at build time — see the
+// mediapipeWasm plugin in vite.config.ts). Falls back to a version-pinned CDN
+// path if the local copy is missing.
+const WASM_PATH = '/wasm';
+const WASM_FALLBACK =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
 
 // Bundled in public/models so the engine doesn't depend on an external model
 // host at runtime. Falls back to the Google-hosted model if absent.
@@ -18,13 +22,23 @@ export interface PoseDetector {
   close(): void;
 }
 
-async function resolveModelPath(): Promise<string> {
+async function headOk(url: string): Promise<boolean> {
   try {
-    const res = await fetch(MODEL_PATH, { method: 'HEAD' });
-    return res.ok ? MODEL_PATH : MODEL_FALLBACK;
+    const res = await fetch(url, { method: 'HEAD' });
+    return res.ok;
   } catch {
-    return MODEL_FALLBACK;
+    return false;
   }
+}
+
+async function resolveWasmPath(): Promise<string> {
+  return (await headOk(`${WASM_PATH}/vision_wasm_internal.js`))
+    ? WASM_PATH
+    : WASM_FALLBACK;
+}
+
+async function resolveModelPath(): Promise<string> {
+  return (await headOk(MODEL_PATH)) ? MODEL_PATH : MODEL_FALLBACK;
 }
 
 /**
@@ -32,8 +46,11 @@ async function resolveModelPath(): Promise<string> {
  * Domain-agnostic: it only knows how to turn a video frame into landmarks.
  */
 export async function createPoseDetector(): Promise<PoseDetector> {
-  const fileset = await FilesetResolver.forVisionTasks(WASM_PATH);
-  const modelAssetPath = await resolveModelPath();
+  const [wasmPath, modelAssetPath] = await Promise.all([
+    resolveWasmPath(),
+    resolveModelPath(),
+  ]);
+  const fileset = await FilesetResolver.forVisionTasks(wasmPath);
 
   const landmarker = await PoseLandmarker.createFromOptions(fileset, {
     baseOptions: {
