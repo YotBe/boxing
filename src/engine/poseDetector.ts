@@ -86,11 +86,26 @@ export interface PoseDetectorOptions {
   minTrackingConfidence?: number;
 }
 
+/**
+ * What the detector actually ended up as, which is not always what was asked
+ * for. Every field here is the *effective* value, so the UI can report reality
+ * rather than intent — a demo that has quietly dropped to CPU or to CDN-hosted
+ * assets still looks perfectly healthy until the moment it matters.
+ */
 export interface PoseDetectorInfo {
   variant: ModelVariantInfo;
+  /** The delegate that actually initialised, not necessarily the one requested. */
   delegate: DelegateId;
+  /** What was asked for, so the UI can tell a fallback from a choice. */
+  requestedDelegate: DelegateId;
   /** True when the model was served from the bundle rather than the CDN. */
   bundled: boolean;
+  /**
+   * True when any fallback rung was used. Kept separate from the two specific
+   * comparisons above because a fallback on the asset axis says nothing about
+   * the delegate, and reporting one as the other is worse than staying quiet.
+   */
+  degraded: boolean;
   minPoseDetectionConfidence: number;
   minTrackingConfidence: number;
 }
@@ -140,57 +155,125 @@ async function build(
  * such false negative would have quietly sent a demo that is supposed to run
  * offline out to a CDN instead. Failing over on a real failure is both more
  * robust and two round trips cheaper on a cold start.
+ *
+ * Initialisation can fail along two independent axes, and the fallback has to
+ * treat them separately. If the *assets* are unreachable, retrying against the
+ * hosted copies helps. If the *delegate* is refused — WebKit declining to give
+ * MediaPipe a GPU context is the realistic case — then retrying the same
+ * delegate against a different host fails in exactly the same way, and the user
+ * gets a dead screen for something that would have run fine on CPU. So the
+ * ladder varies one axis at a time, cheapest and most likely first.
  */
 export async function createPoseDetector(
   options: PoseDetectorOptions = {},
 ): Promise<PoseDetector> {
   const variant = MODEL_VARIANTS[options.variant ?? 'lite'];
-  const delegate = options.delegate ?? 'GPU';
+  const requested = options.delegate ?? 'GPU';
   const minPoseDetectionConfidence =
     options.minPoseDetectionConfidence ?? DEFAULT_DETECTION_CONFIDENCE;
   const minTrackingConfidence =
     options.minTrackingConfidence ?? DEFAULT_TRACKING_CONFIDENCE;
 
-  let bundled = true;
-  let landmarker: PoseLandmarker;
-  try {
-    landmarker = await build(
-      WASM_PATH,
-      variant.path,
-      delegate,
-      minPoseDetectionConfidence,
-      minTrackingConfidence,
-    );
-  } catch (err) {
-    console.warn(
-      'Bundled runtime/model unavailable, falling back to hosted copies:',
-      err,
-    );
-    bundled = false;
-    landmarker = await build(
-      WASM_FALLBACK,
-      variant.fallback,
-      delegate,
-      minPoseDetectionConfidence,
-      minTrackingConfidence,
-    );
+  interface Rung {
+    wasmPath: string;
+    modelAssetPath: string;
+    delegate: DelegateId;
+    bundled: boolean;
+    why: string;
   }
+
+  const ladder: Rung[] = [
+    {
+      wasmPath: WASM_PATH,
+      modelAssetPath: variant.path,
+      delegate: requested,
+      bundled: true,
+      why: 'bundled assets, requested delegate',
+    },
+  ];
+
+  // Only worth a rung if it is actually a different configuration.
+  if (requested !== 'CPU') {
+    ladder.push({
+      wasmPath: WASM_PATH,
+      modelAssetPath: variant.path,
+      delegate: 'CPU',
+      bundled: true,
+      why: 'bundled assets, CPU delegate (GPU unavailable)',
+    });
+  }
+
+  // The runtime and the model are separate downloads and fail separately, so
+  // they are given separate rungs. Reaching for the hosted runtime because the
+  // *model* was missing would throw away a perfectly good local runtime and
+  // take on a second network dependency — and the runtime CDN is exactly the
+  // sort of host a corporate network blocks.
+  ladder.push({
+    wasmPath: WASM_PATH,
+    modelAssetPath: variant.fallback,
+    delegate: requested,
+    bundled: false,
+    why: 'local runtime, hosted model (bundled model unreachable)',
+  });
+
+  ladder.push({
+    wasmPath: WASM_FALLBACK,
+    modelAssetPath: variant.fallback,
+    delegate: requested,
+    bundled: false,
+    why: 'hosted runtime and model (bundle unreachable)',
+  });
+
+  let landmarker: PoseLandmarker | null = null;
+  let reached: Rung = ladder[0];
+  let lastError: unknown;
+
+  for (const [index, rung] of ladder.entries()) {
+    try {
+      landmarker = await build(
+        rung.wasmPath,
+        rung.modelAssetPath,
+        rung.delegate,
+        minPoseDetectionConfidence,
+        minTrackingConfidence,
+      );
+      reached = rung;
+      if (index > 0) {
+        // Named explicitly so the reason survives into a remote-debugging
+        // session on a real device, where reproducing this is expensive.
+        console.warn(
+          `Pose detector fell back to: ${rung.why}. Previous attempt failed with:`,
+          lastError,
+        );
+      }
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!landmarker) throw lastError ?? new Error('Pose detector failed to start.');
+
+  const resolved = landmarker;
+  const info: PoseDetectorInfo = {
+    variant,
+    delegate: reached.delegate,
+    requestedDelegate: requested,
+    bundled: reached.bundled,
+    degraded: reached !== ladder[0],
+    minPoseDetectionConfidence,
+    minTrackingConfidence,
+  };
 
   return {
     detect(video, timestampMs) {
-      return landmarker.detectForVideo(video, timestampMs);
+      return resolved.detectForVideo(video, timestampMs);
     },
     info() {
-      return {
-        variant,
-        delegate,
-        bundled,
-        minPoseDetectionConfidence,
-        minTrackingConfidence,
-      };
+      return info;
     },
     close() {
-      landmarker.close();
+      resolved.close();
     },
   };
 }

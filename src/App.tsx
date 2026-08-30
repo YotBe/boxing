@@ -41,12 +41,45 @@ import {
 } from './engine/types';
 import { createDynamicTracker, type DynamicTracker } from './engine/dynamics';
 import { movements } from './movements';
-import { warmOfflineCache } from './offline';
+import { warmOfflineCache, type OfflineStatus } from './offline';
 import { useWakeLock } from './useWakeLock';
 
 // How often to push feedback into React state (the skeleton is drawn every
 // frame on the canvas; the text panel doesn't need 60fps).
 const PANEL_UPDATE_MS = 100;
+
+// Consecutive failing frames before the detector is declared broken. About a
+// second of animation frames — long enough to ride out a swap, short enough
+// that nobody stands there wondering why it cannot see them.
+const DETECT_FAILURE_LIMIT = 60;
+
+/**
+ * Remembers a compute delegate across reloads.
+ *
+ * MediaPipe shares one WASM module for the whole page, and a GPU graph that
+ * fails to start leaves that module's GL bindings broken — so a landmarker
+ * rebuilt on CPU in the same session reports itself as CPU and then still dies
+ * inside `detectForVideo`, calling into bindings that are no longer there. The
+ * in-session fallback is therefore best-effort only; the reliable recovery is a
+ * fresh page with a clean module. Persisting the choice is what turns "this
+ * device cannot run it" into "reload once".
+ */
+const DELEGATE_KEY = 'pose-coach:delegate';
+
+function loadStoredDelegate(): DelegateId | null {
+  try {
+    const raw = localStorage.getItem(DELEGATE_KEY);
+    return raw === 'CPU' || raw === 'GPU' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeDelegate(delegate: DelegateId): void {
+  try {
+    localStorage.setItem(DELEGATE_KEY, delegate);
+  } catch {}
+}
 
 const REPO_URL = 'https://github.com/YotBe/pose-coach';
 
@@ -150,7 +183,13 @@ export default function App() {
 
   // --- Inference configuration, all switchable while running -------------
   const [modelVariant, setModelVariant] = useState<ModelVariantId>('lite');
-  const [delegate, setDelegate] = useState<DelegateId>('GPU');
+  const [delegate, setDelegate] = useState<DelegateId>(
+    () => loadStoredDelegate() ?? 'GPU',
+  );
+  // Readable from inside the long-lived render loop, which does not restart on
+  // every change to this value.
+  const delegateRef = useRef(delegate);
+  delegateRef.current = delegate;
   const [detectorInfo, setDetectorInfo] = useState<PoseDetectorInfo | null>(null);
   const [swappingModel, setSwappingModel] = useState(false);
 
@@ -174,7 +213,7 @@ export default function App() {
   // --- Runtime telemetry --------------------------------------------------
   const telemetryRef = useRef(createTelemetryMeter());
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null);
-  const [offlineReady, setOfflineReady] = useState(false);
+  const [offlineStatus, setOfflineStatus] = useState<OfflineStatus>('registering');
 
   // Keep the screen alive for as long as there is something to look at.
   const wakeLockActive = useWakeLock(true);
@@ -680,8 +719,9 @@ export default function App() {
   useEffect(() => {
     if (!cameraReady || !detectorReady) return;
     let cancelled = false;
-    warmOfflineCache().then((ready) => {
-      if (!cancelled) setOfflineReady(ready);
+    setOfflineStatus('caching');
+    warmOfflineCache().then((status) => {
+      if (!cancelled) setOfflineStatus(status);
     });
     return () => {
       cancelled = true;
@@ -730,6 +770,13 @@ export default function App() {
     setCameraError(err);
   }, []);
 
+  // An explicit choice is remembered, so it survives the reload that a failed
+  // delegate asks for — and picking GPU again clears a stored CPU fallback.
+  const handleSelectDelegate = useCallback((next: DelegateId) => {
+    storeDelegate(next);
+    setDelegate(next);
+  }, []);
+
   // Compute camera view container ring/glow styles for round phases
   const containerRingClass = useMemo(() => {
     if (!roundModeActive) return 'border-zinc-800/80 ring-0';
@@ -751,6 +798,7 @@ export default function App() {
     let raf = 0;
     let lastPanel = 0;
     let lastVideoTime = -1;
+    let consecutiveDetectFailures = 0;
 
     // The overlay canvas must match the frame source's intrinsic size, which is
     // not known until metadata arrives and changes outright when the source is
@@ -792,7 +840,24 @@ export default function App() {
       const inferenceStart = performance.now();
       try {
         result = detector.detect(video, timestampMs);
-      } catch {
+        consecutiveDetectFailures = 0;
+      } catch (err) {
+        // A single throw is normal around a source or model swap and is not
+        // worth reacting to. A detector that throws on every frame, though, is
+        // dead — and swallowing that silently leaves the app sitting on
+        // "Looking for you", which reads as an empty room rather than a broken
+        // pipeline. Surface it instead of hanging.
+        consecutiveDetectFailures += 1;
+        if (consecutiveDetectFailures === DETECT_FAILURE_LIMIT) {
+          console.error('Pose inference is failing on every frame:', err);
+          // Arrange for the next load to come up on CPU with a clean module,
+          // so the remedy offered on screen is one the reload actually honours.
+          // This tests what was *requested*, not what the detector reports: an
+          // in-session fallback already claims CPU while being broken, so
+          // reading the effective value would decide there is nothing to store.
+          if (delegateRef.current !== 'CPU') storeDelegate('CPU');
+          setModelError('Inference is failing on every frame.');
+        }
         return;
       }
       const inferenceMs = performance.now() - inferenceStart;
@@ -1097,7 +1162,7 @@ export default function App() {
     (source.kind === 'camera' && cameraError ? cameraError.message : null);
   const blockingRemedy =
     modelError !== null
-      ? 'The model files are bundled with the app. If this persists, hard-reload the page to rebuild the offline cache.'
+      ? 'Reload the page — it will restart on the CPU delegate, which needs a fresh session to take effect. If it still fails, switch the model variant to Lite after reloading.'
       : (cameraError?.remedy ?? null);
 
   // Format seconds to mm:ss
@@ -1357,9 +1422,11 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() =>
-                      source.kind === 'camera'
-                        ? handleSelectCamera(source.facingMode)
-                        : window.location.reload()
+                      // A model failure is only cleared by a fresh page: the
+                      // WASM module is shared and cannot be rebuilt in place.
+                      modelError !== null || source.kind === 'file'
+                        ? window.location.reload()
+                        : handleSelectCamera(source.facingMode)
                     }
                     className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-md active:scale-95"
                   >
@@ -1395,7 +1462,7 @@ export default function App() {
             variant={modelVariant}
             onSelectVariant={setModelVariant}
             delegate={delegate}
-            onSelectDelegate={setDelegate}
+            onSelectDelegate={handleSelectDelegate}
             swapping={swappingModel}
             movements={movements}
             selectedMovementId={selectedMovementId}
@@ -1405,8 +1472,9 @@ export default function App() {
             onVisibilityThreshold={setVisibilityThreshold}
             detectionConfidence={detectionConfidence}
             onDetectionConfidence={setDetectionConfidence}
-            offlineReady={offlineReady}
+            offlineStatus={offlineStatus}
             wakeLockActive={wakeLockActive}
+            detector={detectorInfo}
           />
 
           {/* Calibration Panel */}

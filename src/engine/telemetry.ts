@@ -80,8 +80,12 @@ export function createTelemetryMeter(): TelemetryMeter {
   function tick(frameTimestampMs: number, inferenceMs: number): void {
     if (lastFrameMs !== null) {
       const gap = frameTimestampMs - lastFrameMs;
-      // Guard against a paused tab or a seeked video producing absurd gaps.
-      if (gap > 0 && gap < 2000) push(gaps, gap);
+      // Guard against a backgrounded tab or a seeked video producing absurd
+      // gaps. The ceiling is deliberately generous: an earlier 2s cut-off also
+      // threw away every sample from genuinely slow inference, so a device
+      // grinding along at 0.4fps reported 0 — the one reading where an honest
+      // number matters most.
+      if (gap > 0 && gap < 5000) push(gaps, gap);
     }
     lastFrameMs = frameTimestampMs;
     push(latencies, inferenceMs);

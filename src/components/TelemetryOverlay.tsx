@@ -52,8 +52,11 @@ export default function TelemetryOverlay({
     >
       <div className="flex items-baseline gap-3">
         <div className="flex items-baseline gap-1">
+          {/* A decimal below 10fps: rounding 0.4 to "0" reads as broken rather
+              than slow, and on a struggling device that is the difference
+              between a diagnosis and a mystery. */}
           <span className={`text-xl font-black tabular-nums leading-none sm:text-2xl ${fpsTone}`}>
-            {fps.toFixed(0)}
+            {fps >= 10 ? fps.toFixed(0) : fps.toFixed(1)}
           </span>
           <span className="text-[9px] font-bold uppercase tracking-wider text-white/70">
             fps
@@ -70,7 +73,7 @@ export default function TelemetryOverlay({
       </div>
 
       <div className="mt-1.5 space-y-0.5 text-[10px] font-semibold leading-tight text-white/85 sm:text-[11px]">
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-white/50">model</span>
           <span className="text-white">
             {detector ? detector.variant.label : '—'}
@@ -78,9 +81,31 @@ export default function TelemetryOverlay({
           <span className="text-white/50">
             {detector ? `· ${detector.variant.inputResolution}` : ''}
           </span>
-          <span className="rounded bg-white/10 px-1 text-[9px] uppercase tracking-wide text-white/70">
+          {/* Amber when this is a fallback rather than a choice — a GPU that
+              was refused otherwise just looks like a slow phone. */}
+          <span
+            className={`rounded px-1 text-[9px] uppercase tracking-wide ${
+              detector && detector.delegate !== detector.requestedDelegate
+                ? 'bg-amber-400/25 text-amber-200'
+                : 'bg-white/10 text-white/70'
+            }`}
+          >
             {detector?.delegate ?? '—'}
           </span>
+          {/* Where the model and runtime actually came from. Serving from a CDN
+              works fine right up until the network goes, which is exactly when
+              this demo needs it not to. */}
+          {detector && (
+            <span
+              className={`rounded px-1 text-[9px] uppercase tracking-wide ${
+                detector.bundled
+                  ? 'bg-white/10 text-white/70'
+                  : 'bg-amber-400/25 text-amber-200'
+              }`}
+            >
+              {detector.bundled ? 'local' : 'CDN'}
+            </span>
+          )}
           {swapping && (
             <span className="animate-pulse text-amber-300">swapping…</span>
           )}

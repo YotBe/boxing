@@ -4,7 +4,9 @@ import {
   MODEL_VARIANT_IDS,
   type DelegateId,
   type ModelVariantId,
+  type PoseDetectorInfo,
 } from '../engine/poseDetector';
+import type { OfflineStatus } from '../offline';
 import type { MovementDefinition } from '../engine/types';
 import type { FrameSource } from './CameraView';
 
@@ -29,9 +31,40 @@ interface DemoControlsProps {
   detectionConfidence: number;
   onDetectionConfidence: (value: number) => void;
 
-  offlineReady: boolean;
+  offlineStatus: OfflineStatus;
   wakeLockActive: boolean;
+  detector: PoseDetectorInfo | null;
 }
+
+/**
+ * One row of the pre-flight check: whether it passes, what it is called, and
+ * what to do about it when it does not.
+ */
+interface PreflightRow {
+  ok: boolean;
+  pending?: boolean;
+  label: string;
+  detail: string;
+}
+
+const OFFLINE_LABEL: Record<OfflineStatus, string> = {
+  unsupported: 'No service worker',
+  registering: 'Starting…',
+  caching: 'Caching…',
+  ready: 'Offline ready',
+  failed: 'Offline FAILED',
+};
+
+const OFFLINE_DETAIL: Record<OfflineStatus, string> = {
+  unsupported:
+    'This browser exposes no service worker — Private Browsing on iOS does this. Open the page in a normal window; airplane mode will not work otherwise.',
+  registering: 'Registering the worker.',
+  caching:
+    'Downloading the runtime and both models (~26MB). Wait for this to finish before testing airplane mode.',
+  ready: 'Runtime and both model variants are stored. Safe to pull the network.',
+  failed:
+    'The cache could not be filled. Reload on a working connection and watch this go green before relying on offline.',
+};
 
 const segmentBase =
   'flex-1 rounded-lg px-2 py-2 text-[11px] font-bold uppercase tracking-wide transition-all active:scale-95 sm:text-xs';
@@ -101,14 +134,67 @@ export default function DemoControls({
   onVisibilityThreshold,
   detectionConfidence,
   onDetectionConfidence,
-  offlineReady,
+  offlineStatus,
   wakeLockActive,
+  detector,
 }: DemoControlsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showJson, setShowJson] = useState(false);
   const [showTuning, setShowTuning] = useState(false);
+  const [showPreflight, setShowPreflight] = useState(false);
 
   const isCamera = source.kind === 'camera';
+
+  // The four things that have to be true for this run to be demo-safe. Each one
+  // is a state the app already knows and previously kept to itself.
+  const preflight: PreflightRow[] = [
+    {
+      ok: offlineStatus === 'ready',
+      pending: offlineStatus === 'registering' || offlineStatus === 'caching',
+      label: OFFLINE_LABEL[offlineStatus],
+      detail: OFFLINE_DETAIL[offlineStatus],
+    },
+    {
+      ok: !!detector?.bundled,
+      pending: !detector,
+      label: detector
+        ? detector.bundled
+          ? 'Assets served locally'
+          : 'Assets served from CDN'
+        : 'Assets…',
+      detail: detector?.bundled
+        ? 'The model and runtime came from this origin, so they work with no network.'
+        : 'The bundled copies could not be loaded and hosted ones were used instead. This run will NOT survive airplane mode — hard-reload and re-check.',
+    },
+    {
+      ok: !!detector && detector.delegate === detector.requestedDelegate,
+      pending: !detector,
+      label: detector
+        ? detector.delegate === detector.requestedDelegate
+          ? `Running on ${detector.delegate}`
+          : `Fell back to ${detector.delegate}`
+        : 'Compute…',
+      detail:
+        detector && detector.delegate !== detector.requestedDelegate
+          ? 'The requested delegate was refused and a fallback was used. Reload before demoing — MediaPipe shares one WASM module per page, so an in-session fallback often cannot recover.'
+          : 'The requested compute delegate initialised normally.',
+    },
+    {
+      ok: wakeLockActive,
+      label: wakeLockActive ? 'Screen stays awake' : 'Screen will sleep',
+      detail: wakeLockActive
+        ? 'A wake lock is held; the screen will not dim mid-demo.'
+        : 'No wake lock — this browser may not support the API (Safari before 16.4). Set auto-lock to Never before the demo.',
+    },
+  ];
+
+  const preflightPassing = preflight.filter((r) => r.ok).length;
+  const preflightPending = preflight.some((r) => r.pending);
+  const allClear = preflightPassing === preflight.length;
+  // Name the first thing that is wrong right on the collapsed badge. "3/4" on
+  // its own makes you open the panel to find out which one, which is exactly
+  // the wrong amount of friction for a check you run while walking in.
+  const firstProblem = preflight.find((r) => !r.ok && !r.pending);
 
   return (
     <div className="flex flex-col gap-2.5 rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-3 shadow-lg backdrop-blur-md">
@@ -210,26 +296,27 @@ export default function DemoControls({
       )}
 
       <div className="flex items-center justify-between gap-2 border-t border-zinc-800/70 pt-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={`rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${
-              offlineReady
-                ? 'bg-emerald-500/15 text-emerald-400'
-                : 'bg-zinc-800/60 text-zinc-500'
-            }`}
-          >
-            {offlineReady ? 'Offline ready' : 'Caching…'}
+        <button
+          type="button"
+          onClick={() => setShowPreflight((v) => !v)}
+          aria-expanded={showPreflight}
+          className={`flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide transition-colors ${
+            allClear
+              ? 'bg-emerald-500/15 text-emerald-400'
+              : preflightPending
+                ? 'bg-zinc-800/60 text-zinc-400'
+                : 'bg-amber-500/15 text-amber-300'
+          }`}
+        >
+          <span className="truncate">
+            {allClear
+              ? 'Pre-flight all clear'
+              : firstProblem
+                ? `Pre-flight ${preflightPassing}/${preflight.length} · ${firstProblem.label}`
+                : `Pre-flight ${preflightPassing}/${preflight.length}`}
           </span>
-          <span
-            className={`rounded-md px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide ${
-              wakeLockActive
-                ? 'bg-sky-500/15 text-sky-400'
-                : 'bg-zinc-800/60 text-zinc-500'
-            }`}
-          >
-            {wakeLockActive ? 'Screen awake' : 'Screen lock on'}
-          </span>
-        </div>
+          <span aria-hidden="true">{showPreflight ? '▾' : '▸'}</span>
+        </button>
         <button
           type="button"
           onClick={() => setShowTuning((v) => !v)}
@@ -239,6 +326,43 @@ export default function DemoControls({
           {showTuning ? 'Hide tuning' : 'Tuning'}
         </button>
       </div>
+
+      {showPreflight && (
+        <ul className="flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+          {preflight.map((row) => (
+            <li key={row.label} className="flex gap-2">
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 shrink-0 font-mono text-xs font-black ${
+                  row.ok
+                    ? 'text-emerald-400'
+                    : row.pending
+                      ? 'text-zinc-500'
+                      : 'text-amber-400'
+                }`}
+              >
+                {row.ok ? '✓' : row.pending ? '…' : '✗'}
+              </span>
+              <div className="min-w-0">
+                <div
+                  className={`font-mono text-[10px] font-bold uppercase tracking-wide ${
+                    row.ok
+                      ? 'text-emerald-300'
+                      : row.pending
+                        ? 'text-zinc-400'
+                        : 'text-amber-300'
+                  }`}
+                >
+                  {row.label}
+                </div>
+                <div className="text-[10px] leading-snug text-zinc-500">
+                  {row.detail}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {showTuning && (
         <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">

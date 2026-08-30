@@ -16,7 +16,7 @@
  * anything still missing once it is up and running.
  */
 
-const CACHE = 'pose-engine-v1';
+const CACHE = 'pose-engine-v2';
 
 // The worker's own scope is the deployment's base path, so the same file works
 // at a domain root and in a subdirectory (a GitHub Pages project site) without
