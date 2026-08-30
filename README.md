@@ -78,6 +78,34 @@ The landmarks are also temporally **smoothed** to cut jitter, and joints whose l
 below a visibility threshold are marked unavailable — so stepping out of frame shows a neutral
 "looking for you" state instead of a false "wrong".
 
+## Running it on a device
+
+The app is built to come up and stay up on hardware you do not control and a
+network you cannot trust.
+
+**Nothing is fetched at runtime.** The pose models and MediaPipe's WASM runtime
+are served from the app's own origin, and a service worker (`public/sw.js`)
+keeps them, plus the app bundle, in the Cache API. After one successful load the
+page cold-starts and runs with the network switched off entirely. There are no
+webfonts and no CDN preconnects, for the same reason. The **Offline ready**
+badge under the live view turns green once every byte needed to run is stored.
+
+**Inference telemetry is always on screen** — rolling frame rate, per-frame model
+latency (the `detectForVideo` call alone, measured separately from smoothing,
+evaluation and canvas drawing), the model variant and its input tensor, the
+source resolution, and mean keypoint confidence for the current frame.
+
+**The trade-offs are switchable while it runs.** Model variant (Lite ↔ Full),
+compute delegate (GPU ↔ CPU), the keypoint visibility floor and the model's own
+detection floor are all live controls, so the cost of accuracy is something you
+watch on the readout rather than something you take on faith.
+
+**The frame source is swappable too.** Front camera, rear camera, or a recorded
+video file — the engine sits behind an `HTMLVideoElement` and cannot tell the
+difference, which makes a clip a complete stand-in when a room's lighting or a
+permission prompt lets the camera down. Camera failures name the specific cause
+and the way out rather than leaving a blank frame.
+
 ## Run it
 
 ```bash

@@ -8,11 +8,13 @@ import {
 } from './types';
 
 /** A landmark is usable only if it exists and clears the visibility bar. */
-function isVisible(landmark: Landmark | undefined): landmark is Landmark {
+function isVisible(
+  landmark: Landmark | undefined,
+  threshold: number,
+): landmark is Landmark {
   return (
     !!landmark &&
-    (landmark.visibility === undefined ||
-      landmark.visibility >= VISIBILITY_THRESHOLD)
+    (landmark.visibility === undefined || landmark.visibility >= threshold)
   );
 }
 
@@ -27,10 +29,17 @@ function isVisible(landmark: Landmark | undefined): landmark is Landmark {
  * Joints whose landmarks are occluded / off-screen are marked `available:false`
  * and excluded from the verdict, so partial visibility shows a neutral state
  * rather than a false "wrong".
+ *
+ * `visibilityThreshold` is a parameter rather than a fixed constant because the
+ * right value depends on the room, not on the movement. Good light and a plain
+ * background support a strict bar; a cluttered office at three metres needs a
+ * looser one, or every joint reads as unavailable and the app sits there
+ * claiming it cannot see you.
  */
 export function evaluate(
   landmarks: Landmark[],
   movement: MovementDefinition,
+  visibilityThreshold: number = VISIBILITY_THRESHOLD,
 ): Feedback {
   const joints: JointResult[] = movement.joints.map((spec) => {
     const [ai, bi, ci] = spec.points;
@@ -38,7 +47,11 @@ export function evaluate(
     const b = landmarks[bi];
     const c = landmarks[ci];
 
-    if (!isVisible(a) || !isVisible(b) || !isVisible(c)) {
+    if (
+      !isVisible(a, visibilityThreshold) ||
+      !isVisible(b, visibilityThreshold) ||
+      !isVisible(c, visibilityThreshold)
+    ) {
       return { id: spec.id, angle: NaN, inRange: false, available: false };
     }
 

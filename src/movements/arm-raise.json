@@ -1,0 +1,27 @@
+{
+  "id": "arm-raise",
+  "name": "Arm Raise (demo config)",
+  "joints": [
+    {
+      "id": "left_shoulder_raise",
+      "label": "Left arm overhead",
+      "points": [23, 11, 13],
+      "targetMin": 130,
+      "targetMax": 180
+    }
+  ],
+  "cues": [
+    {
+      "jointId": "left_shoulder_raise",
+      "when": "below",
+      "cue": "Raise your left arm higher — take it all the way overhead."
+    }
+  ],
+  "dynamics": {
+    "trackJointId": "left_shoulder_raise",
+    "enterDownBelow": 45,
+    "enterUpAbove": 130,
+    "countOn": "up",
+    "label": "Arm raises"
+  }
+}
