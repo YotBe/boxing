@@ -4,10 +4,15 @@ import {
   type PoseLandmarkerResult,
 } from '@mediapipe/tasks-vision';
 
+// Everything self-hosted is addressed relative to the deployment's base path,
+// so the same build works at a domain root and in a subdirectory (GitHub Pages
+// project sites). BASE_URL always carries a trailing slash.
+const BASE = import.meta.env.BASE_URL;
+
 // Self-hosted WASM runtime (copied from node_modules at build time — see the
 // mediapipeWasm plugin in vite.config.ts). Falls back to a version-pinned CDN
 // path if the local copy is missing.
-const WASM_PATH = '/wasm';
+const WASM_PATH = `${BASE}wasm`;
 const WASM_FALLBACK =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm';
 
@@ -50,7 +55,7 @@ export const MODEL_VARIANTS: Record<ModelVariantId, ModelVariantInfo> = {
   lite: {
     id: 'lite',
     label: 'Lite',
-    path: '/models/pose_landmarker_lite.task',
+    path: `${BASE}models/pose_landmarker_lite.task`,
     fallback: `${MODEL_HOST}/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
     sizeMb: 5.5,
     inputResolution: '256×256',
@@ -59,7 +64,7 @@ export const MODEL_VARIANTS: Record<ModelVariantId, ModelVariantInfo> = {
   full: {
     id: 'full',
     label: 'Full',
-    path: '/models/pose_landmarker_full.task',
+    path: `${BASE}models/pose_landmarker_full.task`,
     fallback: `${MODEL_HOST}/pose_landmarker_full/float16/1/pose_landmarker_full.task`,
     sizeMb: 9.0,
     inputResolution: '256×256',

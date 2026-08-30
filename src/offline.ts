@@ -21,7 +21,13 @@ import { MODEL_VARIANTS, MODEL_VARIANT_IDS } from './engine/poseDetector';
  * the offline support working right up until the screen stays blank.
  */
 function appShellUrls(): string[] {
-  const urls = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg'];
+  const base = import.meta.env.BASE_URL;
+  const urls = [
+    base,
+    `${base}index.html`,
+    `${base}manifest.webmanifest`,
+    `${base}favicon.svg`,
+  ];
   document
     .querySelectorAll<HTMLScriptElement>('script[src]')
     .forEach((el) => urls.push(el.src));
@@ -44,10 +50,11 @@ function appShellUrls(): string[] {
  * to hold for a case that would be too slow to demo anyway.
  */
 function criticalUrls(): string[] {
+  const base = import.meta.env.BASE_URL;
   return [
     ...appShellUrls(),
-    '/wasm/vision_wasm_internal.js',
-    '/wasm/vision_wasm_internal.wasm',
+    `${base}wasm/vision_wasm_internal.js`,
+    `${base}wasm/vision_wasm_internal.wasm`,
     ...MODEL_VARIANT_IDS.map((id) => MODEL_VARIANTS[id].path),
   ];
 }
@@ -56,10 +63,16 @@ export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 
+  const base = import.meta.env.BASE_URL;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.warn('Service worker registration failed:', err);
-    });
+    // Registering with an explicit scope keeps the worker's control limited to
+    // this app's subtree, which matters on a host where other projects share
+    // the origin — a GitHub Pages user site, for instance.
+    navigator.serviceWorker
+      .register(`${base}sw.js`, { scope: base })
+      .catch((err) => {
+        console.warn('Service worker registration failed:', err);
+      });
   });
 }
 
