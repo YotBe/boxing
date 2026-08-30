@@ -112,6 +112,7 @@ and the way out rather than leaving a blank frame.
 npm install
 npm run dev        # open the printed URL, grant camera access
 npm test           # unit tests (angles, evaluator, smoothing, calibration, guard geometry)
+npm run e2e        # end-to-end suites in a real browser (see e2e/README.md)
 npm run typecheck  # tsc --noEmit
 npm run build      # production build
 ```

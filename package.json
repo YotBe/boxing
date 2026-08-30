@@ -8,7 +8,11 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "node e2e/run-all.mjs",
+    "e2e:flows": "node e2e/run-all.mjs flows",
+    "e2e:offline": "node e2e/run-all.mjs offline",
+    "e2e:degraded": "node e2e/run-all.mjs degraded"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.18",
@@ -20,6 +24,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.0.4",
     "autoprefixer": "^10.4.20",
+    "playwright": "^1.62.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
