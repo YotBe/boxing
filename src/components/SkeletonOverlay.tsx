@@ -19,6 +19,7 @@ export interface SkeletonOverlayHandle {
     landmarks: Landmark[] | undefined,
     feedback: Feedback | null,
     movement: MovementDefinition,
+    visibilityThreshold?: number,
   ): void;
   clear(): void;
   /** Trigger a glowing rings shockwave at the specified joint landmark. */
@@ -39,7 +40,15 @@ interface HitSplash {
  * highlights any out-of-range joint vertices in red using the engine's
  * per-joint feedback.
  */
-const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
+interface SkeletonOverlayProps {
+  /** Must match the video's mirroring or the skeleton lands on the wrong side. */
+  mirrored: boolean;
+}
+
+const SkeletonOverlay = forwardRef<SkeletonOverlayHandle, SkeletonOverlayProps>((
+  { mirrored },
+  ref,
+) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const utilsRef = useRef<DrawingUtils | null>(null);
 
@@ -80,7 +89,7 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
         });
       }
     },
-    draw(landmarks, feedback, movement) {
+    draw(landmarks, feedback, movement, visibilityThreshold = VISIBILITY_THRESHOLD) {
       const c = ctx();
       const canvas = canvasRef.current;
       const utils = utilsRef.current;
@@ -100,10 +109,10 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
       const lineColor = allGood ? '#22c55e' : '#e5e7eb';
 
       const visible = landmarks.filter(
-        (l) => (l.visibility ?? 1) >= VISIBILITY_THRESHOLD,
+        (l) => (l.visibility ?? 1) >= visibilityThreshold,
       );
       const hidden = landmarks.filter(
-        (l) => (l.visibility ?? 1) < VISIBILITY_THRESHOLD,
+        (l) => (l.visibility ?? 1) < visibilityThreshold,
       );
 
       // Draw skeleton skeleton lines
@@ -169,7 +178,7 @@ const SkeletonOverlay = forwardRef<SkeletonOverlayHandle>((_props, ref) => {
     <canvas
       ref={canvasRef}
       className="absolute inset-0 h-full w-full object-cover pointer-events-none"
-      style={{ transform: 'scaleX(-1)' }}
+      style={{ transform: mirrored ? 'scaleX(-1)' : 'none' }}
     />
   );
 });

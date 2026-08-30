@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import CameraView from './components/CameraView';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import CameraView, {
+  isSecureContextForCamera,
+  type CameraError,
+  type FrameSource,
+} from './components/CameraView';
+import DemoControls from './components/DemoControls';
 import FeedbackPanel from './components/FeedbackPanel';
 import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
+import TelemetryOverlay from './components/TelemetryOverlay';
 import {
   applyCalibration,
   clearCalibration,
@@ -14,11 +20,29 @@ import {
   type CalibrationMap,
 } from './engine/calibration';
 import { evaluate } from './engine/evaluator';
-import { createPoseDetector, type PoseDetector } from './engine/poseDetector';
+import {
+  createPoseDetector,
+  DEFAULT_DETECTION_CONFIDENCE,
+  type DelegateId,
+  type ModelVariantId,
+  type PoseDetector,
+  type PoseDetectorInfo,
+} from './engine/poseDetector';
 import { createSmoother } from './engine/smoothing';
-import type { Feedback, DynamicResult } from './engine/types';
+import {
+  createTelemetryMeter,
+  meanVisibility,
+  type TelemetrySnapshot,
+} from './engine/telemetry';
+import {
+  VISIBILITY_THRESHOLD,
+  type Feedback,
+  type DynamicResult,
+} from './engine/types';
 import { createDynamicTracker, type DynamicTracker } from './engine/dynamics';
 import { movements } from './movements';
+import { warmOfflineCache } from './offline';
+import { useWakeLock } from './useWakeLock';
 
 // How often to push feedback into React state (the skeleton is drawn every
 // frame on the canvas; the text panel doesn't need 60fps).
@@ -104,12 +128,56 @@ export default function App() {
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<CameraError | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
-  // Camera devices selection
-  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+  // --- Frame source: live camera (either lens) or a recorded clip ---------
+  // The recorded clip is the insurance policy: if the room's lighting, the
+  // permission prompt or the hardware lets us down, the same engine runs
+  // against a file and the demo continues.
+  const [source, setSource] = useState<FrameSource>({
+    kind: 'camera',
+    facingMode: 'user',
+  });
+  const fileUrlRef = useRef<string | null>(null);
+  const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
+  const sourceSizeRef = useRef(sourceSize);
+
+  // Only a selfie view should be mirrored. Mirroring a rear-camera or recorded
+  // frame would put the skeleton's left arm on the subject's right.
+  const mirrored = source.kind === 'camera' && source.facingMode === 'user';
+
+  // --- Inference configuration, all switchable while running -------------
+  const [modelVariant, setModelVariant] = useState<ModelVariantId>('lite');
+  const [delegate, setDelegate] = useState<DelegateId>('GPU');
+  const [detectorInfo, setDetectorInfo] = useState<PoseDetectorInfo | null>(null);
+  const [swappingModel, setSwappingModel] = useState(false);
+
+  // The visibility floor is applied per frame, so it takes effect on the very
+  // next one. The detection floor is baked into the landmarker at construction,
+  // so it is debounced — otherwise dragging the slider would rebuild the model
+  // on every step.
+  const [visibilityThreshold, setVisibilityThreshold] = useState(
+    VISIBILITY_THRESHOLD,
+  );
+  const visibilityThresholdRef = useRef(visibilityThreshold);
+  visibilityThresholdRef.current = visibilityThreshold;
+
+  const [detectionConfidence, setDetectionConfidence] = useState(
+    DEFAULT_DETECTION_CONFIDENCE,
+  );
+  const [appliedDetectionConfidence, setAppliedDetectionConfidence] = useState(
+    DEFAULT_DETECTION_CONFIDENCE,
+  );
+
+  // --- Runtime telemetry --------------------------------------------------
+  const telemetryRef = useRef(createTelemetryMeter());
+  const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null);
+  const [offlineReady, setOfflineReady] = useState(false);
+
+  // Keep the screen alive for as long as there is something to look at.
+  const wakeLockActive = useWakeLock(true);
 
   // Sound settings. The refs mirror the state so the long-lived rAF loop (whose
   // effect doesn't restart on toggle) always sees the current value.
@@ -536,63 +604,131 @@ export default function App() {
     } catch (e) {}
   }
 
-  // Initialize the detector once.
+  // Build (and rebuild) the detector. Every dependency here is a knob exposed
+  // in the UI: switching model variant, compute delegate or detection floor
+  // tears the landmarker down and stands a new one up, which is what makes the
+  // latency-versus-accuracy trade-off something you can watch happen rather
+  // than something you have to be told about.
   useEffect(() => {
     let cancelled = false;
-    createPoseDetector()
+    setSwappingModel(true);
+    setModelError(null);
+
+    createPoseDetector({
+      variant: modelVariant,
+      delegate,
+      minPoseDetectionConfidence: appliedDetectionConfidence,
+      minTrackingConfidence: appliedDetectionConfidence,
+    })
       .then((detector) => {
         if (cancelled) {
           detector.close();
           return;
         }
         detectorRef.current = detector;
+        setDetectorInfo(detector.info());
+        telemetryRef.current.reset();
+        setTelemetry(null);
         setDetectorReady(true);
+        setSwappingModel(false);
       })
       .catch((err) => {
-        setError(
+        if (cancelled) return;
+        setSwappingModel(false);
+        setModelError(
           err instanceof Error
-            ? `Failed to load the pose model: ${err.message}`
-            : 'Failed to load the pose model.',
+            ? `Failed to load the ${modelVariant} model: ${err.message}`
+            : `Failed to load the ${modelVariant} model.`,
         );
       });
+
     return () => {
       cancelled = true;
-      clearTimers();
-      detectorRef.current?.close();
+      const detector = detectorRef.current;
       detectorRef.current = null;
+      setDetectorReady(false);
+      detector?.close();
+    };
+  }, [modelVariant, delegate, appliedDetectionConfidence]);
+
+  // Commit the detection floor a beat after the slider settles.
+  useEffect(() => {
+    const id = window.setTimeout(
+      () => setAppliedDetectionConfidence(detectionConfidence),
+      400,
+    );
+    return () => window.clearTimeout(id);
+  }, [detectionConfidence]);
+
+  // Teardown that belongs to the whole app rather than to one detector.
+  useEffect(() => {
+    return () => {
+      clearTimers();
       audioCtxRef.current?.close().catch(() => {});
       audioCtxRef.current = null;
+      if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
       try {
         window.speechSynthesis?.cancel();
       } catch {}
     };
   }, []);
 
-  // Enumerate active camera devices when camera is ready
+  // Once the app is actually running, ask the service worker to fill in
+  // anything still missing from the offline set — notably the model variant
+  // that has not been selected yet. Doing it here rather than at install time
+  // keeps ~9MB of background download off the critical path of a cold start.
   useEffect(() => {
-    async function updateDevices() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter((d) => d.kind === 'videoinput');
-        setCameraDevices(videoDevices);
-        if (videoDevices.length > 0 && !selectedCameraId) {
-          setSelectedCameraId(videoDevices[0].deviceId);
-        }
-      } catch (err) {
-        console.warn('enumerateDevices failed:', err);
-      }
-    }
+    if (!cameraReady || !detectorReady) return;
+    let cancelled = false;
+    warmOfflineCache().then((ready) => {
+      if (!cancelled) setOfflineReady(ready);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraReady, detectorReady]);
 
-    updateDevices();
+  // Switching frame source restarts the pipeline: a new stream means new
+  // intrinsic dimensions, so the overlay canvas and the telemetry both need to
+  // re-derive rather than carry the previous source's numbers forward.
+  const beginSourceSwitch = useCallback(() => {
+    setCameraReady(false);
+    setCameraError(null);
+    setFeedback(null);
+    setSourceSize({ width: 0, height: 0 });
+    sourceSizeRef.current = { width: 0, height: 0 };
+    telemetryRef.current.reset();
+    setTelemetry(null);
+  }, []);
 
-    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
-      navigator.mediaDevices.addEventListener('devicechange', updateDevices);
-      return () => {
-        navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
-      };
-    }
-  }, [cameraReady, selectedCameraId]);
+  const handleSelectCamera = useCallback(
+    (facingMode: 'user' | 'environment') => {
+      beginSourceSwitch();
+      setSource({ kind: 'camera', facingMode });
+    },
+    [beginSourceSwitch],
+  );
+
+  const handleSelectFile = useCallback(
+    (file: File) => {
+      beginSourceSwitch();
+      if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
+      const url = URL.createObjectURL(file);
+      fileUrlRef.current = url;
+      setSource({ kind: 'file', url, name: file.name });
+    },
+    [beginSourceSwitch],
+  );
+
+  const handleCameraReady = useCallback(() => {
+    setCameraError(null);
+    setCameraReady(true);
+  }, []);
+
+  const handleCameraError = useCallback((err: CameraError) => {
+    setCameraReady(false);
+    setCameraError(err);
+  }, []);
 
   // Compute camera view container ring/glow styles for round phases
   const containerRingClass = useMemo(() => {
@@ -610,30 +746,68 @@ export default function App() {
   useEffect(() => {
     if (!cameraReady || !detectorReady) return;
     const video = videoRef.current;
-    const detector = detectorRef.current;
-    if (!video || !detector) return;
-
-    overlayRef.current?.syncSize(video.videoWidth, video.videoHeight);
+    if (!video || !detectorRef.current) return;
 
     let raf = 0;
     let lastPanel = 0;
     let lastVideoTime = -1;
 
+    // The overlay canvas must match the frame source's intrinsic size, which is
+    // not known until metadata arrives and changes outright when the source is
+    // swapped for a recorded clip.
+    const syncSourceSize = () => {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      if (!width || !height) return;
+      const previous = sourceSizeRef.current;
+      if (previous.width === width && previous.height === height) return;
+      sourceSizeRef.current = { width, height };
+      overlayRef.current?.syncSize(width, height);
+      setSourceSize({ width, height });
+    };
+    syncSourceSize();
+
     const tick = (timestampMs: number) => {
       raf = requestAnimationFrame(tick);
+
+      // Re-read the detector every frame rather than capturing it once. A model
+      // swap nulls this ref before closing the old landmarker, so this check is
+      // what guarantees no frame is ever handed to a detector that is being
+      // torn down — calling into a closed MediaPipe graph aborts its WASM
+      // module and spits an error into the console mid-demo.
+      const detector = detectorRef.current;
+      if (!detector) return;
+
       if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
       lastVideoTime = video.currentTime;
+      syncSourceSize();
 
+      const threshold = visibilityThresholdRef.current;
+
+      // Time the model call and nothing else. Smoothing, evaluation and the
+      // canvas draw all happen below and belong to render cost, not to
+      // inference cost — reporting them together would make a fast model on a
+      // busy main thread look like a slow model.
       let result;
+      const inferenceStart = performance.now();
       try {
         result = detector.detect(video, timestampMs);
       } catch {
         return;
       }
+      const inferenceMs = performance.now() - inferenceStart;
 
       const current = movementRef.current;
       const rawImg = result.landmarks[0];
       const rawWorld = result.worldLandmarks[0];
+
+      // Confidence is read off the raw landmarks, before smoothing, so the
+      // number reflects what the model actually reported this frame.
+      if (rawImg) {
+        telemetryRef.current.record(timestampMs, inferenceMs, meanVisibility(rawImg));
+      } else {
+        telemetryRef.current.recordEmpty(timestampMs, inferenceMs);
+      }
       const img = rawImg ? imgSmootherRef.current.smooth(rawImg) : undefined;
       const world = rawWorld ? worldSmootherRef.current.smooth(rawWorld) : undefined;
 
@@ -645,7 +819,7 @@ export default function App() {
               visibility: img[i]?.visibility ?? w.visibility,
             }))
           : world;
-        fb = evaluate(forEval, current);
+        fb = evaluate(forEval, current, threshold);
       }
 
       const inRestPhase = roundModeActive && roundPhase === 'rest';
@@ -761,12 +935,13 @@ export default function App() {
         }
       }
 
-      overlayRef.current?.draw(img, fb, current);
+      overlayRef.current?.draw(img, fb, current, threshold);
 
       if (timestampMs - lastPanel >= PANEL_UPDATE_MS) {
         lastPanel = timestampMs;
         setFeedback(fb);
-        
+        setTelemetry(telemetryRef.current.snapshot());
+
         if (fb?.dynamic) {
           setDynamicStats(fb.dynamic);
         } else {
@@ -907,6 +1082,24 @@ export default function App() {
         ? 'HOLDING STILL...'
         : null;
 
+  const sourceLabel =
+    source.kind === 'file'
+      ? `file · ${source.name}`
+      : source.facingMode === 'user'
+        ? 'front camera'
+        : 'rear camera';
+
+  // A camera failure is recoverable — the recorded-clip source keeps the whole
+  // pipeline demonstrable — so it is shown as a blocking panel only while the
+  // live camera is the selected source.
+  const blockingError =
+    modelError ??
+    (source.kind === 'camera' && cameraError ? cameraError.message : null);
+  const blockingRemedy =
+    modelError !== null
+      ? 'The model files are bundled with the app. If this persists, hard-reload the page to rebuild the offline cache.'
+      : (cameraError?.remedy ?? null);
+
   // Format seconds to mm:ss
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -915,18 +1108,19 @@ export default function App() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 md:p-8">
+    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 p-3 sm:p-4 sm:gap-6 md:p-8">
       {/* Header section with Glass design */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border border-zinc-800/80 border-t-red-500/40 border-t-2 bg-zinc-950/40 backdrop-blur-md p-6 rounded-3xl shadow-xl shadow-red-500/5">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 border border-zinc-800/80 border-t-red-500/40 border-t-2 bg-zinc-950/40 backdrop-blur-md p-4 sm:p-6 rounded-3xl shadow-xl shadow-red-500/5">
         <div>
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
-            <h1 className="text-2xl font-extrabold tracking-tight text-zinc-100 uppercase font-mono">
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-100 uppercase font-mono">
               Nak Muay Coach
             </h1>
           </div>
-          <p className="text-sm text-zinc-400 mt-1">
-            Interactive Muay Thai trainer. Practice stances or hit combinations called by the voice coach.
+          <p className="mt-1 text-[11px] leading-snug text-zinc-400 sm:text-sm">
+            Real-time pose inference on-device. Movement logic is data, not code
+            — swap the model variant and the movement config while it runs.
           </p>
         </div>
         <a
@@ -939,18 +1133,41 @@ export default function App() {
         </a>
       </header>
 
+      {/* The one failure that looks like a bug but is a deployment mistake. */}
+      {!isSecureContextForCamera() && (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+          <span className="font-bold">Insecure origin.</span> Browsers only grant
+          camera access over HTTPS or on localhost, so the live camera cannot
+          start here. Open the deployed https:// URL — or use the{' '}
+          <span className="font-bold">Video file</span> source below, which works
+          anywhere.
+        </div>
+      )}
+
       {/* Two-Column Responsive Dashboard Layout */}
       <main className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Camera View (Main screen) */}
         <div className="lg:col-span-7 flex flex-col gap-4">
-          <div className={`relative aspect-video w-full overflow-hidden rounded-3xl border bg-zinc-950/60 shadow-2xl group transition-all duration-500 ${containerRingClass}`}>
+          {/* Portrait-first on a phone, landscape from tablet up. A standing
+              person fills a 3:4 frame far better than a 16:9 one. */}
+          <div className={`relative aspect-[3/4] w-full overflow-hidden rounded-3xl border bg-zinc-950/60 shadow-2xl group transition-all duration-500 sm:aspect-video ${containerRingClass}`}>
             <CameraView
               videoRef={videoRef}
-              selectedCameraId={selectedCameraId}
-              onReady={() => setCameraReady(true)}
-              onError={setError}
+              source={source}
+              mirrored={mirrored}
+              onReady={handleCameraReady}
+              onError={handleCameraError}
             />
-            <SkeletonOverlay ref={overlayRef} />
+            <SkeletonOverlay ref={overlayRef} mirrored={mirrored} />
+
+            <TelemetryOverlay
+              stats={telemetry}
+              detector={detectorInfo}
+              sourceWidth={sourceSize.width}
+              sourceHeight={sourceSize.height}
+              sourceLabel={sourceLabel}
+              swapping={swappingModel}
+            />
 
             {/* High-tech viewfinder HUD corners overlay */}
             <div className="absolute inset-4 border border-zinc-800/20 pointer-events-none rounded-2xl">
@@ -1028,15 +1245,80 @@ export default function App() {
               </div>
             )}
 
+            {/* Live coaching readout, pinned to the frame.
+                On a phone the full feedback panel is a long scroll below the
+                video, which is no use when the whole point is to watch the
+                skeleton and the verdict at the same time. This is the one line
+                that has to be readable from across a desk. */}
+            {workoutMode === 'practice' && cameraReady && detectorReady && !blockingError && (
+              <div className="pointer-events-none absolute inset-x-2 bottom-2 select-none sm:inset-x-3 sm:bottom-3">
+                <div
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 shadow-lg backdrop-blur-md ${
+                    !feedback?.tracked
+                      ? 'border-white/15 bg-black/70'
+                      : feedback.ok
+                        ? 'border-emerald-400/40 bg-emerald-950/70'
+                        : 'border-amber-400/40 bg-amber-950/70'
+                  }`}
+                >
+                  <span
+                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                      !feedback?.tracked
+                        ? 'bg-zinc-500'
+                        : feedback.ok
+                          ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                          : 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+                    }`}
+                  />
+                  <span
+                    className={`min-w-0 flex-1 text-sm font-bold leading-snug sm:text-base ${
+                      !feedback?.tracked
+                        ? 'text-zinc-300'
+                        : feedback.ok
+                          ? 'text-emerald-200'
+                          : 'text-amber-100'
+                    }`}
+                  >
+                    {!feedback?.tracked
+                      ? 'Looking for you — step into frame'
+                      : feedback.ok
+                        ? 'Form OK'
+                        : (feedback.activeCues[0] ?? 'Adjust your position')}
+                  </span>
+                  {dynamicStats ? (
+                    <span className="shrink-0 text-right font-mono text-xs font-black tabular-nums text-white sm:text-sm">
+                      {dynamicStats.reps}
+                      <span className="ml-1 text-[9px] font-bold uppercase text-white/60">
+                        reps
+                      </span>
+                    </span>
+                  ) : (
+                    liveHoldTime > 0 && (
+                      <span className="shrink-0 text-right font-mono text-xs font-black tabular-nums text-white sm:text-sm">
+                        {liveHoldTime}s
+                        <span className="ml-1 text-[9px] font-bold uppercase text-white/60">
+                          held
+                        </span>
+                      </span>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Loading/Setup overlay */}
-            {(!cameraReady || !detectorReady) && !error && (
+            {(!cameraReady || !detectorReady) && !blockingError && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#020205]/95 text-zinc-400 gap-3 backdrop-blur-sm select-none">
                 <svg className="animate-spin h-10 w-10 text-red-500" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 <span className="text-xs font-bold tracking-widest font-mono uppercase text-zinc-400">
-                  {!detectorReady ? 'Loading Pose Landmarker AI...' : 'Starting camera stream...'}
+                  {!detectorReady
+                    ? `Loading ${modelVariant} landmarker (${delegate})…`
+                    : source.kind === 'file'
+                      ? 'Opening video file…'
+                      : 'Starting camera stream…'}
                 </span>
               </div>
             )}
@@ -1058,23 +1340,74 @@ export default function App() {
               </div>
             )}
 
-            {error && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center bg-black/80 backdrop-blur-sm select-none">
-                <span className="font-semibold text-rose-400">{error}</span>
-                <span className="max-w-sm text-xs text-zinc-400">
-                  Check that your camera is connected and this site has camera
-                  permission, then try again.
+            {/* A failure never leaves a blank frame: it says what broke, what to
+                do about it, and offers the recorded-clip route out. */}
+            {blockingError && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-auto p-5 text-center bg-black/90 backdrop-blur-sm">
+                <span className="text-2xl" aria-hidden="true">
+                  ⚠️
                 </span>
-                <button
-                  type="button"
-                  onClick={() => window.location.reload()}
-                  className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-md active:scale-95"
-                >
-                  Retry
-                </button>
+                <span className="font-bold text-rose-400">{blockingError}</span>
+                {blockingRemedy && (
+                  <span className="max-w-sm text-xs leading-relaxed text-zinc-300">
+                    {blockingRemedy}
+                  </span>
+                )}
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      source.kind === 'camera'
+                        ? handleSelectCamera(source.facingMode)
+                        : window.location.reload()
+                    }
+                    className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2 text-xs font-bold text-white transition-all shadow-md active:scale-95"
+                  >
+                    Retry
+                  </button>
+                  {source.kind === 'camera' && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSelectCamera(
+                          source.facingMode === 'user' ? 'environment' : 'user',
+                        )
+                      }
+                      className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2 text-xs font-bold text-zinc-200 transition-all hover:bg-zinc-800 active:scale-95"
+                    >
+                      Try other camera
+                    </button>
+                  )}
+                </div>
+                <span className="max-w-sm text-[11px] leading-relaxed text-zinc-500">
+                  Or pick <span className="font-bold text-zinc-400">Video file</span>{' '}
+                  in the controls below — the engine runs identically on a
+                  recorded clip, telemetry included.
+                </span>
               </div>
             )}
           </div>
+
+          <DemoControls
+            source={source}
+            onSelectCamera={handleSelectCamera}
+            onSelectFile={handleSelectFile}
+            variant={modelVariant}
+            onSelectVariant={setModelVariant}
+            delegate={delegate}
+            onSelectDelegate={setDelegate}
+            swapping={swappingModel}
+            movements={movements}
+            selectedMovementId={selectedMovementId}
+            onSelectMovement={handleSelectMovement}
+            activeMovement={movement}
+            visibilityThreshold={visibilityThreshold}
+            onVisibilityThreshold={setVisibilityThreshold}
+            detectionConfidence={detectionConfidence}
+            onDetectionConfidence={setDetectionConfidence}
+            offlineReady={offlineReady}
+            wakeLockActive={wakeLockActive}
+          />
 
           {/* Calibration Panel */}
           {workoutMode === 'practice' && (
@@ -1175,7 +1508,8 @@ export default function App() {
             comboFeedbackText={comboFeedbackText}
             startNextCombo={startNextCombo}
             COMBOS={COMBOS}
-            
+
+
             // Round structures
             roundModeActive={roundModeActive}
             currentRound={currentRound}
@@ -1188,11 +1522,6 @@ export default function App() {
             restDurationSec={restDurationSec}
             setRestDurationSec={setRestDurationSec}
             onToggleRoundSession={handleToggleRoundSession}
-
-            // Camera settings
-            cameraDevices={cameraDevices}
-            selectedCameraId={selectedCameraId}
-            setSelectedCameraId={setSelectedCameraId}
           />
         </aside>
       </main>

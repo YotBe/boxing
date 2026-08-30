@@ -49,10 +49,6 @@ interface FeedbackPanelProps {
   setRestDurationSec: (r: number) => void;
   onToggleRoundSession: () => void;
 
-  // Camera settings
-  cameraDevices: MediaDeviceInfo[];
-  selectedCameraId: string;
-  setSelectedCameraId: (id: string) => void;
 }
 
 interface AngleProgressBarProps {
@@ -165,9 +161,6 @@ export default function FeedbackPanel({
   setRestDurationSec,
   onToggleRoundSession,
 
-  cameraDevices,
-  selectedCameraId,
-  setSelectedCameraId,
 }: FeedbackPanelProps) {
   const getStrikeName = (id: string) => {
     if (id === 'jab') return 'Left Jab';
@@ -224,31 +217,6 @@ export default function FeedbackPanel({
           Combo Coach (Pad Work)
         </button>
       </div>
-
-      {/* Camera Input Device Selector */}
-      {cameraDevices.length > 0 && (
-        <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-4 shadow-lg flex flex-col gap-2">
-          <div className="flex justify-between items-center">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Active Device</span>
-            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded bg-zinc-800/55 text-zinc-400 border border-zinc-850 uppercase">Webcam</span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor="camera-select" className="sr-only">Select Video Input Device</label>
-            <select
-              id="camera-select"
-              value={selectedCameraId}
-              onChange={(e) => setSelectedCameraId(e.target.value)}
-              className="w-full rounded-xl bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 p-2.5 outline-none focus:border-zinc-600 transition-all font-medium cursor-pointer"
-            >
-              {cameraDevices.map((device) => (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Camera ${device.deviceId.slice(0, 5)}`}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
 
       {/* --- ROUNDS WORKOUT TIMER CARD --- */}
       <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">

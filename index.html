@@ -18,10 +18,13 @@
     <meta name="twitter:title" content="Nak Muay Coach — AI Muay Thai Trainer" />
     <meta name="twitter:description" content="Real-time AI Muay Thai coach in your browser. Live form feedback, voice-called combos, round timer — 100% on-device." />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!--
+      No webfonts and no CDN preconnects on purpose. This has to come up on a
+      network that is broken, blocked, or behind a captive portal, and a
+      render-blocking stylesheet from a third-party host is exactly the kind of
+      dependency that turns a working demo into a blank screen. The system font
+      stack in index.css looks native on every device anyway.
+    -->
   </head>
   <body class="bg-[#020205] text-[#fafafa]">
     <div id="root"></div>
