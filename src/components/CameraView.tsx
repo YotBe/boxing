@@ -166,7 +166,10 @@ export default function CameraView({
         }
         const video = videoRef.current;
         if (!video) return;
-        video.src = '';
+        // removeAttribute rather than src = '': an empty src resolves against
+        // the document URL, so some browsers go off and try to load the page
+        // itself as a video and fire an error before the stream is attached.
+        video.removeAttribute('src');
         video.loop = false;
         video.srcObject = stream;
         await video.play();
