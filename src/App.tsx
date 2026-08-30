@@ -1357,7 +1357,15 @@ export default function App() {
                 video, which is no use when the whole point is to watch the
                 skeleton and the verdict at the same time. This is the one line
                 that has to be readable from across a desk. */}
-            {workoutMode === 'practice' && cameraReady && detectorReady && !blockingError && (
+            {workoutMode === 'practice' &&
+              cameraReady &&
+              detectorReady &&
+              !blockingError &&
+              // Not during the rest phase. The tick already stops evaluating
+              // then, so the banner would sit there on top of the rest screen
+              // telling you to step into frame during the one part of the
+              // session you are meant to be out of it.
+              !(roundModeActive && roundPhase === 'rest') && (
               <div className="pointer-events-none absolute inset-x-2 bottom-2 select-none sm:inset-x-3 sm:bottom-3">
                 <div
                   className={`flex items-center gap-2 rounded-xl border px-3 py-2 shadow-lg backdrop-blur-md ${
