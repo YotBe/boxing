@@ -1,14 +1,15 @@
 {
   "name": "Nak Muay Coach — AI Muay Thai Trainer",
   "short_name": "Nak Muay Coach",
-  "description": "Real-time AI Muay Thai coach in your browser. Practice stances, hit voice-called combos, and get live form feedback — all on-device.",
-  "start_url": "/",
+  "description": "Real-time on-device pose inference in the browser. Live skeleton, form feedback, and inference telemetry — no backend, no network at runtime.",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#020205",
   "theme_color": "#020205",
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

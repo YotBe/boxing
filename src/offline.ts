@@ -21,7 +21,13 @@ import { MODEL_VARIANTS, MODEL_VARIANT_IDS } from './engine/poseDetector';
  * the offline support working right up until the screen stays blank.
  */
 function appShellUrls(): string[] {
-  const urls = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg'];
+  const base = import.meta.env.BASE_URL;
+  const urls = [
+    base,
+    `${base}index.html`,
+    `${base}manifest.webmanifest`,
+    `${base}favicon.svg`,
+  ];
   document
     .querySelectorAll<HTMLScriptElement>('script[src]')
     .forEach((el) => urls.push(el.src));
@@ -44,22 +50,48 @@ function appShellUrls(): string[] {
  * to hold for a case that would be too slow to demo anyway.
  */
 function criticalUrls(): string[] {
+  const base = import.meta.env.BASE_URL;
   return [
     ...appShellUrls(),
-    '/wasm/vision_wasm_internal.js',
-    '/wasm/vision_wasm_internal.wasm',
+    `${base}wasm/vision_wasm_internal.js`,
+    `${base}wasm/vision_wasm_internal.wasm`,
     ...MODEL_VARIANT_IDS.map((id) => MODEL_VARIANTS[id].path),
   ];
 }
 
+/**
+ * How the offline guarantee is actually doing.
+ *
+ * A boolean was not enough: "not ready" covered a browser with no service
+ * worker at all (iOS Private Browsing), a registration that was rejected, a
+ * warm still downloading 15MB of models, and a warm that gave up — four
+ * situations with four different responses, all rendering as the same shrug.
+ */
+export type OfflineStatus =
+  | 'unsupported'
+  | 'registering'
+  | 'caching'
+  | 'ready'
+  | 'failed';
+
+function serviceWorkerAvailable(): boolean {
+  return typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
+}
+
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  if (!serviceWorkerAvailable()) return;
 
+  const base = import.meta.env.BASE_URL;
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
-      console.warn('Service worker registration failed:', err);
-    });
+    // Registering with an explicit scope keeps the worker's control limited to
+    // this app's subtree, which matters on a host where other projects share
+    // the origin — a GitHub Pages user site, for instance.
+    navigator.serviceWorker
+      .register(`${base}sw.js`, { scope: base })
+      .catch((err) => {
+        console.warn('Service worker registration failed:', err);
+      });
   });
 }
 
@@ -69,23 +101,25 @@ export function registerServiceWorker(): void {
  * download of the variant the user has not selected never competes with the
  * cold start.
  */
-export function warmOfflineCache(): Promise<boolean> {
-  if (!import.meta.env.PROD) return Promise.resolve(false);
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
-    return Promise.resolve(false);
-  }
+export function warmOfflineCache(): Promise<OfflineStatus> {
+  // In dev there is deliberately no worker, so there is nothing to be ready
+  // about — say so rather than claiming a failure.
+  if (!import.meta.env.PROD) return Promise.resolve('unsupported');
+  if (!serviceWorkerAvailable()) return Promise.resolve('unsupported');
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (ready: boolean) => {
+    const finish = (status: OfflineStatus) => {
       if (settled) return;
       settled = true;
       navigator.serviceWorker.removeEventListener('message', onMessage);
-      resolve(ready);
+      resolve(status);
     };
 
     function onMessage(event: MessageEvent) {
-      if (event.data?.type === 'warm-result') finish(!!event.data.ready);
+      if (event.data?.type === 'warm-result') {
+        finish(event.data.ready ? 'ready' : 'failed');
+      }
     }
 
     navigator.serviceWorker.addEventListener('message', onMessage);
@@ -93,12 +127,12 @@ export function warmOfflineCache(): Promise<boolean> {
     navigator.serviceWorker.ready
       .then((registration) => {
         const worker = registration.active;
-        if (!worker) return finish(false);
+        if (!worker) return finish('failed');
         worker.postMessage({ type: 'warm', urls: criticalUrls() });
         // Downloading ~15MB of models over a slow connection is allowed to take
         // a while, but the badge should not hang forever if the worker dies.
-        setTimeout(() => finish(false), 120_000);
+        setTimeout(() => finish('failed'), 120_000);
       })
-      .catch(() => finish(false));
+      .catch(() => finish('failed'));
   });
 }

@@ -41,6 +41,11 @@ function mediapipeWasm(): Plugin {
 }
 
 export default defineConfig({
+  // Root-hosted by default (Netlify, Vercel, a plain static server). GitHub
+  // Pages serves a project site from a subdirectory instead, so the deploy
+  // workflow sets BASE_PATH and every runtime path is derived from
+  // import.meta.env.BASE_URL rather than being hardcoded to "/".
+  base: process.env.BASE_PATH || '/',
   plugins: [react(), mediapipeWasm()],
   server: {
     host: true,
