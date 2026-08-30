@@ -10,6 +10,7 @@ import SkeletonOverlay, {
   type SkeletonOverlayHandle,
 } from './components/SkeletonOverlay';
 import TelemetryOverlay from './components/TelemetryOverlay';
+import { Card, PrimaryButton } from './components/ui';
 import {
   applyCalibration,
   clearCalibration,
@@ -65,6 +66,7 @@ const DETECT_FAILURE_LIMIT = 60;
  * device cannot run it" into "reload once".
  */
 const DELEGATE_KEY = 'pose-coach:delegate';
+const DEV_MODE_KEY = 'pose-coach:dev';
 
 function loadStoredDelegate(): DelegateId | null {
   try {
@@ -209,6 +211,33 @@ export default function App() {
   const [appliedDetectionConfidence, setAppliedDetectionConfidence] = useState(
     DEFAULT_DETECTION_CONFIDENCE,
   );
+
+  /**
+   * The engineering surface is off by default.
+   *
+   * Telemetry, the model and compute switches, the tuning sliders and the
+   * pre-flight check are all one tap away rather than permanently on screen —
+   * someone training does not need a compute-delegate control in their
+   * eyeline. It persists, so it can be switched on once before a demo and
+   * stay on across reloads.
+   */
+  const [devMode, setDevMode] = useState(() => {
+    try {
+      return localStorage.getItem(DEV_MODE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleDevMode() {
+    setDevMode((on) => {
+      const next = !on;
+      try {
+        localStorage.setItem(DEV_MODE_KEY, next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  }
 
   // --- Runtime telemetry --------------------------------------------------
   const telemetryRef = useRef(createTelemetryMeter());
@@ -778,15 +807,14 @@ export default function App() {
   }, []);
 
   // Compute camera view container ring/glow styles for round phases
+  // A single quiet border tint marks the round phase. It used to be a 4px ring
+  // plus a coloured glow plus animate-pulse on the whole camera frame, which
+  // made the thing you are actually trying to watch throb.
   const containerRingClass = useMemo(() => {
-    if (!roundModeActive) return 'border-zinc-800/80 ring-0';
-    if (roundPhase === 'work') {
-      return 'border-red-500/50 ring-4 ring-red-500/20 shadow-[0_0_24px_rgba(239,68,68,0.15)] animate-pulse';
-    }
-    if (roundPhase === 'rest') {
-      return 'border-emerald-500/50 ring-4 ring-emerald-500/20 shadow-[0_0_24px_rgba(16,185,129,0.15)]';
-    }
-    return 'border-zinc-800/80 ring-0';
+    if (!roundModeActive) return 'border-zinc-800/70';
+    if (roundPhase === 'work') return 'border-red-500/50';
+    if (roundPhase === 'rest') return 'border-emerald-500/50';
+    return 'border-zinc-800/70';
   }, [roundModeActive, roundPhase]);
 
   // Drive the realtime loop once camera + detector are both ready.
@@ -1174,28 +1202,25 @@ export default function App() {
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 p-3 sm:p-4 sm:gap-6 md:p-8">
-      {/* Header section with Glass design */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 border border-zinc-800/80 border-t-red-500/40 border-t-2 bg-zinc-950/40 backdrop-blur-md p-4 sm:p-6 rounded-3xl shadow-xl shadow-red-500/5">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
-            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-100 uppercase font-mono">
-              Nak Muay Coach
-            </h1>
-          </div>
-          <p className="mt-1 text-[11px] leading-snug text-zinc-400 sm:text-sm">
-            Real-time pose inference on-device. Movement logic is data, not code
-            — swap the model variant and the movement config while it runs.
-          </p>
-        </div>
-        <a
-          href={REPO_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="self-start md:self-center rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 px-4 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all shadow-md"
+      {/* A title and one control. The old header was a bordered, blurred,
+          shadowed card with a pulsing dot and a paragraph of positioning copy
+          above the fold — a lot of furniture before you reach the camera. */}
+      <header className="flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold tracking-tight text-zinc-100">
+          Nak Muay Coach
+        </h1>
+        <button
+          type="button"
+          onClick={toggleDevMode}
+          aria-pressed={devMode}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+            devMode
+              ? 'bg-red-600 text-white'
+              : 'border border-zinc-800 text-zinc-400 hover:text-zinc-200'
+          }`}
         >
-          Documentation
-        </a>
+          Dev
+        </button>
       </header>
 
       {/* The one failure that looks like a bug but is a deployment mistake. */}
@@ -1215,7 +1240,7 @@ export default function App() {
         <div className="lg:col-span-7 flex flex-col gap-4">
           {/* Portrait-first on a phone, landscape from tablet up. A standing
               person fills a 3:4 frame far better than a 16:9 one. */}
-          <div className={`relative aspect-[3/4] w-full overflow-hidden rounded-3xl border bg-zinc-950/60 shadow-2xl group transition-all duration-500 sm:aspect-video ${containerRingClass}`}>
+          <div className={`relative aspect-[3/4] w-full overflow-hidden rounded-2xl border bg-zinc-950/60 transition-colors sm:aspect-video ${containerRingClass}`}>
             <CameraView
               videoRef={videoRef}
               source={source}
@@ -1225,39 +1250,59 @@ export default function App() {
             />
             <SkeletonOverlay ref={overlayRef} mirrored={mirrored} />
 
-            <TelemetryOverlay
-              stats={telemetry}
-              detector={detectorInfo}
-              sourceWidth={sourceSize.width}
-              sourceHeight={sourceSize.height}
-              sourceLabel={sourceLabel}
-              swapping={swappingModel}
-            />
+            {devMode && (
+              <TelemetryOverlay
+                stats={telemetry}
+                detector={detectorInfo}
+                sourceWidth={sourceSize.width}
+                sourceHeight={sourceSize.height}
+                sourceLabel={sourceLabel}
+                swapping={swappingModel}
+              />
+            )}
 
-            {/* High-tech viewfinder HUD corners overlay */}
-            <div className="absolute inset-4 border border-zinc-800/20 pointer-events-none rounded-2xl">
-              {/* Top-Left */}
-              <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-red-500/40 rounded-tl-sm" />
-              {/* Top-Right */}
-              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-red-500/40 rounded-tr-sm" />
-              {/* Bottom-Left */}
-              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-red-500/40 rounded-bl-sm" />
-              {/* Bottom-Right */}
-              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-red-500/40 rounded-br-sm" />
-            </div>
-            
+            {/* Flipping the camera is an everyday action, so it stays on the
+                frame rather than moving into the dev panel with the rest of the
+                source controls. */}
+            {source.kind === 'camera' && cameraReady && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleSelectCamera(
+                    source.facingMode === 'user' ? 'environment' : 'user',
+                  )
+                }
+                aria-label="Switch camera"
+                className="absolute right-2 top-2 rounded-full bg-black/60 p-2.5 text-white backdrop-blur-sm transition-colors hover:bg-black/80 sm:right-3 sm:top-3"
+              >
+                <svg
+                  className="h-5 w-5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4 9V7a2 2 0 012-2h2m8 0h2a2 2 0 012 2v2m0 6v2a2 2 0 01-2 2h-2m-8 0H6a2 2 0 01-2-2v-2"
+                  />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            )}
+
             {/* Rounds Rest Phase Overlay Screen */}
             {roundModeActive && roundPhase === 'rest' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-md transition-all duration-300 select-none">
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1 rounded-full">
-                    REST & BREATHE
-                  </span>
-                  <span className="text-6xl font-black text-white tracking-tight tabular-nums font-mono animate-pulse">
+                <div className="flex flex-col items-center gap-1 text-center">
+                  <span className="text-sm font-medium text-emerald-400">Rest</span>
+                  <span className="text-6xl font-bold tabular-nums tracking-tight text-white">
                     {formatTime(roundTimeLeft)}
                   </span>
-                  <span className="text-xs text-zinc-400 font-medium">
-                    Next Round: {currentRound + 1} of {roundCount}
+                  <span className="text-sm text-zinc-400">
+                    Next: round {currentRound + 1} of {roundCount}
                   </span>
                 </div>
               </div>
@@ -1265,14 +1310,11 @@ export default function App() {
 
             {/* Combo Padwork Overlays inside Camera View */}
             {workoutMode === 'combos' && comboStatus === 'waiting' && (!roundModeActive || roundPhase === 'work') && (
-              <div className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-1 pointer-events-none select-none">
-                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full backdrop-blur-sm">
-                  STRIKE TARGET
-                </span>
-                <span className="text-3xl md:text-5xl font-black text-amber-300 tracking-tight drop-shadow-[0_4px_12px_rgba(245,158,11,0.5)] uppercase animate-pulse">
+              <div className="pointer-events-none absolute inset-x-0 bottom-3 flex select-none flex-col items-center gap-2">
+                <span className="rounded-xl bg-black/70 px-4 py-2 text-2xl font-bold tracking-tight text-white backdrop-blur-sm md:text-3xl">
                   {movements.find(m => m.id === COMBOS[activeComboIndex].sequence[comboStepIndex])?.name ?? COMBOS[activeComboIndex].sequence[comboStepIndex]}
                 </span>
-                <div className="flex gap-1.5 mt-2 bg-black/50 px-3.5 py-2 rounded-2xl border border-zinc-800/60 backdrop-blur-md">
+                <div className="flex gap-1 rounded-xl bg-black/60 px-2 py-1.5 backdrop-blur-sm">
                   {COMBOS[activeComboIndex].sequence.map((strikeId, i) => {
                     const strikeLabel = movements.find(m => m.id === strikeId)?.name ?? strikeId;
                     const isPassed = i < comboStepIndex;
@@ -1280,12 +1322,12 @@ export default function App() {
                     return (
                       <span
                         key={i}
-                        className={`text-[9px] font-bold px-2 py-1 rounded-lg uppercase transition-all duration-300 ${
+                        className={`rounded-lg px-2 py-1 text-[11px] font-medium transition-colors ${
                           isPassed
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            ? 'bg-emerald-500/20 text-emerald-300'
                             : isCurrent
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse scale-105 shadow shadow-amber-500/10'
-                              : 'bg-zinc-800/30 text-zinc-500 border border-zinc-800/50'
+                              ? 'bg-red-600 text-white'
+                              : 'text-zinc-500'
                         }`}
                       >
                         {strikeLabel}
@@ -1299,11 +1341,11 @@ export default function App() {
             {/* Combo hit flash success */}
             {workoutMode === 'combos' && comboStatus === 'success' && (!roundModeActive || roundPhase === 'work') && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-emerald-950/30 backdrop-blur-sm pointer-events-none select-none transition-all duration-300">
-                <div className="flex flex-col items-center gap-1 text-center animate-bounce">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-500/20 border border-emerald-500/35 px-4 py-1 rounded-full">
-                    COMBO COMPLETE!
+                <div className="flex flex-col items-center gap-1 text-center">
+                  <span className="text-sm font-medium text-emerald-400">
+                    Combo complete
                   </span>
-                  <span className="text-4xl md:text-5xl font-black text-white tracking-tight drop-shadow-[0_4px_16px_rgba(16,185,129,0.5)]">
+                  <span className="text-4xl font-bold tracking-tight text-white md:text-5xl">
                     {comboFeedbackText}
                   </span>
                 </div>
@@ -1391,15 +1433,14 @@ export default function App() {
             {/* Calibration countdown layout overlay */}
             {overlayMessage && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm transition-all duration-300 select-none">
-                <div className="flex flex-col items-center gap-2 text-center animate-pulse">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/20 px-3 py-1 rounded-full">
-                    CALIBRATION TRIGGERED
-                  </span>
-                  <span className="text-8xl font-black text-white tracking-tight drop-shadow-[0_4px_24px_rgba(255,255,255,0.25)] font-mono">
+                <div className="flex flex-col items-center gap-1 text-center">
+                  <span className="text-7xl font-bold tabular-nums tracking-tight text-white">
                     {overlayMessage}
                   </span>
-                  <span className="text-xs text-zinc-300 font-semibold tracking-wide">
-                    {calibUi.phase === 'countdown' ? 'Get ready and strike stance...' : 'Observing stance limits...'}
+                  <span className="text-sm text-zinc-300">
+                    {calibUi.phase === 'countdown'
+                      ? 'Get into your stance'
+                      : 'Hold still — measuring'}
                   </span>
                 </div>
               </div>
@@ -1455,108 +1496,85 @@ export default function App() {
             )}
           </div>
 
-          <DemoControls
-            source={source}
-            onSelectCamera={handleSelectCamera}
-            onSelectFile={handleSelectFile}
-            variant={modelVariant}
-            onSelectVariant={setModelVariant}
-            delegate={delegate}
-            onSelectDelegate={handleSelectDelegate}
-            swapping={swappingModel}
-            movements={movements}
-            selectedMovementId={selectedMovementId}
-            onSelectMovement={handleSelectMovement}
-            activeMovement={movement}
-            visibilityThreshold={visibilityThreshold}
-            onVisibilityThreshold={setVisibilityThreshold}
-            detectionConfidence={detectionConfidence}
-            onDetectionConfidence={setDetectionConfidence}
-            offlineStatus={offlineStatus}
-            wakeLockActive={wakeLockActive}
-            detector={detectorInfo}
-          />
-
-          {/* Calibration Panel */}
+          {/* The everyday controls: which movement, and calibrate it to you.
+              The old layout had a movement dropdown here AND a 16-item list in
+              the sidebar — two ways to do the same thing, both always on. */}
           {workoutMode === 'practice' && (
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/20 backdrop-blur-md p-4 shadow-lg">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
+            <Card className="flex flex-col gap-3 px-4 py-3.5">
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedMovementId}
+                  onChange={(e) => handleSelectMovement(e.target.value)}
+                  aria-label="Movement"
+                  className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm font-medium text-zinc-100"
+                >
+                  {movements.map((mov) => (
+                    <option key={mov.id} value={mov.id}>
+                      {mov.name}
+                    </option>
+                  ))}
+                </select>
+                <PrimaryButton
                   onClick={startCalibration}
                   disabled={!cameraReady || !detectorReady || calibrating}
-                  className="rounded-xl bg-red-600 hover:bg-red-500 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40 transition-all shadow-md active:scale-95 shrink-0"
                 >
-                  {calibration ? 'Calibrate Posture' : 'Calibrate Posture'}
-                </button>
-                {calibration && !calibrating && (
-                  <button
-                    type="button"
-                    onClick={resetCalibration}
-                    className="rounded-xl bg-zinc-800/60 border border-zinc-700/40 px-3 py-2.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all shadow-md"
-                  >
-                    Reset Defaults
-                  </button>
-                )}
+                  Calibrate
+                </PrimaryButton>
               </div>
-              <div className="text-xs text-zinc-400 md:text-right font-medium">
+
+              <p className="text-xs text-zinc-500">
                 {calibUi.phase === 'capturing'
-                  ? 'Analyzing and measuring posture...'
+                  ? 'Measuring your stance…'
                   : calibUi.phase === 'countdown'
-                    ? `Get into posture... ${calibUi.secondsLeft}`
+                    ? `Get into position… ${calibUi.secondsLeft}`
                     : calibUi.phase === 'error'
-                      ? <span className="text-amber-400 font-bold">{calibUi.message}</span>
-                      : calibration
-                        ? '✓ Stance calibrated. Ranges adjusted to body proportions.'
-                        : 'Using system stance parameters. Calibrate for high accuracy.'}
-              </div>
-            </div>
+                      ? <span className="text-amber-400">{calibUi.message}</span>
+                      : calibration ? (
+                          <>
+                            Calibrated to you.{' '}
+                            <button
+                              type="button"
+                              onClick={resetCalibration}
+                              className="text-zinc-400 underline underline-offset-2 hover:text-zinc-200"
+                            >
+                              Reset to defaults
+                            </button>
+                          </>
+                        ) : (
+                          'Using default angle ranges. Calibrate to match your proportions and camera angle.'
+                        )}
+              </p>
+            </Card>
+          )}
+
+          {devMode && (
+            <DemoControls
+              source={source}
+              onSelectCamera={handleSelectCamera}
+              onSelectFile={handleSelectFile}
+              variant={modelVariant}
+              onSelectVariant={setModelVariant}
+              delegate={delegate}
+              onSelectDelegate={handleSelectDelegate}
+              swapping={swappingModel}
+              activeMovement={movement}
+              visibilityThreshold={visibilityThreshold}
+              onVisibilityThreshold={setVisibilityThreshold}
+              detectionConfidence={detectionConfidence}
+              onDetectionConfidence={setDetectionConfidence}
+              offlineStatus={offlineStatus}
+              wakeLockActive={wakeLockActive}
+              detector={detectorInfo}
+            />
           )}
         </div>
 
-        {/* Right Column: Sidebar Dashboard (Movement select + Stats + history) */}
-        <aside className="lg:col-span-5 flex flex-col gap-6">
-          {/* Movement Selection (Only shown in single movement practice) */}
-          {workoutMode === 'practice' && (
-            <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/20 backdrop-blur-md p-5 shadow-xl">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Striking Database</span>
-              <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Select Active Striking Stance</h3>
-              <div className="flex flex-col gap-2">
-                {movements.map((mov) => {
-                  const isActive = mov.id === selectedMovementId;
-                  return (
-                    <button
-                      key={mov.id}
-                      type="button"
-                      onClick={() => handleSelectMovement(mov.id)}
-                      className={`group text-left rounded-xl p-3 border transition-all duration-200 flex items-center justify-between active:scale-[0.98] ${
-                        isActive
-                          ? 'bg-red-600/10 border-red-500/30 border-l-4 border-l-red-500 text-red-400 shadow-md shadow-red-500/5 pl-2.5'
-                          : 'bg-zinc-900/30 border-zinc-800/50 border-l-4 border-l-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-900/50 hover:text-zinc-300 pl-2.5'
-                      }`}
-                    >
-                      <div>
-                        <div className="font-extrabold text-sm tracking-tight group-hover:text-white transition-colors">
-                          {mov.name}
-                        </div>
-                        <div className="text-[10px] text-zinc-500 mt-0.5 font-medium">
-                          {mov.dynamics ? 'Repetition strike tracking' : 'Static posture guard'}
-                        </div>
-                      </div>
-                      {isActive && (
-                        <span className="h-1.5 w-1.5 rounded-full bg-red-500 shadow-[0_0_6px_#ef4444]" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
+        <aside className="flex flex-col gap-3 lg:col-span-5">
           {/* Feedback details */}
           <FeedbackPanel
             feedback={feedback}
             movement={movement}
+            movements={movements}
             liveHoldTime={liveHoldTime}
             dynamicStats={dynamicStats}
             voiceEnabled={voiceEnabled}
@@ -1569,11 +1587,8 @@ export default function App() {
             workoutMode={workoutMode}
             setWorkoutMode={handleSetWorkoutMode}
             activeComboIndex={activeComboIndex}
-            setActiveComboIndex={setActiveComboIndex}
             comboStepIndex={comboStepIndex}
             combosCompletedCount={combosCompletedCount}
-            comboStatus={comboStatus}
-            comboFeedbackText={comboFeedbackText}
             startNextCombo={startNextCombo}
             COMBOS={COMBOS}
 
@@ -1594,16 +1609,19 @@ export default function App() {
         </aside>
       </main>
 
-      <footer className="flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-zinc-900 pt-4 pb-2 text-[11px] text-zinc-500">
-        <span className="flex items-center gap-1.5">
-          <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" />
-          </svg>
-          Private by design — all pose analysis runs on your device. Your camera feed never leaves the browser.
-        </span>
+      <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-900 pt-4 text-xs text-zinc-600">
         <span>
-          Not medical or professional coaching advice. Train safely.
+          Runs entirely on your device — the camera feed never leaves the
+          browser. Not coaching or medical advice.
         </span>
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-zinc-400"
+        >
+          Source
+        </a>
       </footer>
     </div>
   );

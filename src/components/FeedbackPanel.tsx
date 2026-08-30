@@ -1,5 +1,12 @@
-import { useMemo } from 'react';
 import type { DynamicResult, Feedback, MovementDefinition } from '../engine/types';
+import {
+  Card,
+  PrimaryButton,
+  QuietButton,
+  Section,
+  Stat,
+  Toggle,
+} from './ui';
 
 interface WorkoutLog {
   id: string;
@@ -14,6 +21,8 @@ interface WorkoutLog {
 interface FeedbackPanelProps {
   feedback: Feedback | null;
   movement: MovementDefinition;
+  /** Every registered movement, so a combo step can be named from its config. */
+  movements: MovementDefinition[];
   liveHoldTime: number;
   dynamicStats: DynamicResult | null;
   voiceEnabled: boolean;
@@ -24,19 +33,14 @@ interface FeedbackPanelProps {
   onClearHistory: () => void;
   onResetReps: () => void;
 
-  // Combo Coach Additions
   workoutMode: 'practice' | 'combos';
   setWorkoutMode: (mode: 'practice' | 'combos') => void;
   activeComboIndex: number;
-  setActiveComboIndex: (idx: number) => void;
   comboStepIndex: number;
   combosCompletedCount: number;
-  comboStatus: 'idle' | 'calling' | 'waiting' | 'success';
-  comboFeedbackText: string;
   startNextCombo: (idx?: number) => void;
   COMBOS: { name: string; sequence: string[] }[];
 
-  // Rounds Workout Additions
   roundModeActive: boolean;
   currentRound: number;
   roundPhase: 'work' | 'rest' | 'inactive';
@@ -48,86 +52,103 @@ interface FeedbackPanelProps {
   restDurationSec: number;
   setRestDurationSec: (r: number) => void;
   onToggleRoundSession: () => void;
-
 }
 
-interface AngleProgressBarProps {
+/** A joint's current angle against its accepted band. */
+function JointRow({
+  label,
+  angle,
+  min,
+  max,
+  inRange,
+  available,
+}: {
   label: string;
   angle: number;
   min: number;
   max: number;
   inRange: boolean;
   available: boolean;
-}
-
-function AngleProgressBar({ label, angle, min, max, inRange, available }: AngleProgressBarProps) {
-  const directionPrompt = useMemo(() => {
-    if (inRange || !available || Number.isNaN(angle)) return null;
-    if (angle < min) {
-      return (
-        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-0.5 animate-pulse">
-          Extend ⬆
-        </span>
-      );
-    }
-    if (angle > max) {
-      return (
-        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center gap-0.5 animate-pulse">
-          Flex ⬇
-        </span>
-      );
-    }
-    return null;
-  }, [angle, min, max, inRange, available]);
-
+}) {
   if (!available || Number.isNaN(angle)) {
     return (
-      <div className="flex flex-col gap-1 rounded-xl bg-zinc-900/30 p-3 border border-zinc-800/40">
-        <div className="flex justify-between items-center text-xs">
-          <span className="text-zinc-500 font-semibold">{label}</span>
-          <span className="text-zinc-600 font-mono text-[10px] uppercase tracking-wider">Out of Frame</span>
-        </div>
-        <div className="h-1.5 bg-zinc-950/50 rounded-full w-full opacity-35" />
+      <div className="flex items-center justify-between py-1.5 text-sm">
+        <span className="text-zinc-500">{label}</span>
+        <span className="text-xs text-zinc-600">out of frame</span>
       </div>
     );
   }
 
-  const leftPercent = Math.max(0, Math.min(100, (min / 180) * 100));
-  const widthPercent = Math.max(0, Math.min(100 - leftPercent, ((max - min) / 180) * 100));
-  const markerPercent = Math.max(0, Math.min(100, (angle / 180) * 100));
+  const left = Math.max(0, Math.min(100, (min / 180) * 100));
+  const width = Math.max(0, Math.min(100 - left, ((max - min) / 180) * 100));
+  const marker = Math.max(0, Math.min(100, (angle / 180) * 100));
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-xl bg-zinc-900/50 p-3 border border-zinc-800/60 hover:border-zinc-700/80 transition-all duration-200">
-      <div className="flex justify-between items-center text-xs">
-        <div className="flex items-center gap-2">
-          <span className="text-zinc-300 font-medium">{label}</span>
-          {directionPrompt}
-        </div>
-        <span className={`font-mono text-xs font-semibold ${inRange ? 'text-emerald-400' : 'text-rose-400'}`}>
-          {Math.round(angle)}° <span className="text-zinc-500 font-normal">({min}°-{max}°)</span>
+    <div className="py-1.5">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-zinc-300">{label}</span>
+        <span className={inRange ? 'text-emerald-400' : 'text-amber-400'}>
+          {Math.round(angle)}°
+          <span className="ml-1 text-xs text-zinc-500">
+            target {min}–{max}°
+          </span>
         </span>
       </div>
-      <div className="relative h-1.5 bg-zinc-950 rounded-full w-full border border-zinc-900/60 overflow-hidden">
+      <div className="relative mt-1.5 h-1 w-full rounded-full bg-zinc-950">
         <div
-          className={`absolute h-full rounded-full transition-all ${
-            inRange ? 'bg-emerald-500/25' : 'bg-rose-500/15'
-          }`}
-          style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
+          className="absolute h-full rounded-full bg-zinc-700"
+          style={{ left: `${left}%`, width: `${width}%` }}
         />
         <div
-          className={`absolute h-3 w-1.5 -top-[3px] rounded-full shadow-md transition-all duration-150 -translate-x-1/2 ${
-            inRange ? 'bg-emerald-400' : 'bg-rose-500'
+          className={`absolute -top-1 h-3 w-1 -translate-x-1/2 rounded-full ${
+            inRange ? 'bg-emerald-400' : 'bg-amber-400'
           }`}
-          style={{ left: `${markerPercent}%` }}
+          style={{ left: `${marker}%` }}
         />
       </div>
     </div>
   );
 }
 
+function LabelledSelect({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-zinc-500">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-2 text-sm text-zinc-200"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+/**
+ * The panel beside (or below) the live view.
+ *
+ * The live verdict and the cue are deliberately *not* here — they are drawn on
+ * the video itself, where you are already looking. Repeating them in a large
+ * card underneath was the single biggest source of duplication in the old
+ * layout. What is left is the thing you glance at between reps (one number),
+ * the session controls, and two collapsed drawers for detail nobody needs
+ * on screen continuously.
+ */
 export default function FeedbackPanel({
   feedback,
   movement,
+  movements,
   liveHoldTime,
   dynamicStats,
   voiceEnabled,
@@ -137,18 +158,13 @@ export default function FeedbackPanel({
   history,
   onClearHistory,
   onResetReps,
-
   workoutMode,
   setWorkoutMode,
   activeComboIndex,
-  setActiveComboIndex: _setActiveComboIndex,
   comboStepIndex,
   combosCompletedCount,
-  comboStatus: _comboStatus,
-  comboFeedbackText: _comboFeedbackText,
   startNextCombo,
   COMBOS,
-
   roundModeActive,
   currentRound,
   roundPhase,
@@ -160,23 +176,13 @@ export default function FeedbackPanel({
   restDurationSec,
   setRestDurationSec,
   onToggleRoundSession,
-
 }: FeedbackPanelProps) {
-  const getStrikeName = (id: string) => {
-    if (id === 'jab') return 'Left Jab';
-    if (id === 'cross') return 'Right Cross';
-    if (id === 'knee') return 'Right Knee';
-    if (id === 'teep') return 'Left Teep';
-    if (id === 'left-hook') return 'Left Hook';
-    if (id === 'right-elbow') return 'Right Elbow Strike';
-    if (id === 'left-elbow') return 'Left Elbow Strike';
-    if (id === 'right-hook') return 'Right Hook';
-    if (id === 'left-knee') return 'Left Knee Strike';
-    if (id === 'right-teep') return 'Right Teep (Front Kick)';
-    if (id === 'left-kick') return 'Left Roundhouse Kick';
-    if (id === 'right-kick') return 'Right Roundhouse Kick';
-    return id;
-  };
+  // Names come from the movement registry rather than a hardcoded lookup. The
+  // old copy of this list sat in this component and had to be edited every time
+  // a movement JSON was added — precisely the coupling the engine is designed
+  // to avoid.
+  const strikeName = (id: string) =>
+    movements.find((m) => m.id === id)?.name ?? id;
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -184,489 +190,249 @@ export default function FeedbackPanel({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const cue = feedback?.activeCues?.[0];
+  const activeCombo = COMBOS[activeComboIndex];
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* Mode Selector Tabs */}
-      <div className="flex rounded-2xl bg-zinc-950/60 border border-zinc-800/80 p-1.5 shadow-md">
-        <button
-          type="button"
-          onClick={() => setWorkoutMode('practice')}
-          className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all ${
-            workoutMode === 'practice'
-              ? 'bg-zinc-900 text-white shadow'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          Single Stance (Practice)
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setWorkoutMode('combos');
-            startNextCombo(0);
-          }}
-          className={`flex-1 rounded-xl py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-            workoutMode === 'combos'
-              ? 'bg-gradient-to-r from-red-600 to-red-700 text-white shadow shadow-red-600/10'
-              : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-ping" />
-          Combo Coach (Pad Work)
-        </button>
+    <div className="flex flex-col gap-3">
+      {/* Mode. Two words each; the old labels were "Single Stance (Practice)"
+          and "Combo Coach (Pad Work)", which is a lot of chrome for a toggle. */}
+      <div className="flex gap-1 rounded-xl bg-zinc-950/60 p-1">
+        {(
+          [
+            ['practice', 'Practice'],
+            ['combos', 'Combos'],
+          ] as const
+        ).map(([mode, label]) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={workoutMode === mode}
+            onClick={() => {
+              setWorkoutMode(mode);
+              if (mode === 'combos') startNextCombo(0);
+            }}
+            className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
+              workoutMode === mode
+                ? 'bg-red-600 text-white'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* --- ROUNDS WORKOUT TIMER CARD --- */}
-      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-32 h-32 bg-red-600/5 rounded-full filter blur-2xl pointer-events-none" />
-        
-        <div className="flex justify-between items-start mb-3">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 font-mono">Workout Flow</span>
-            <h3 className="text-sm font-bold text-zinc-200 mt-0.5">Muay Thai Round Timer</h3>
-          </div>
-          {roundModeActive && (
-            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md ${
-              roundPhase === 'work'
-                ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'
-                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-            }`}>
-              {roundPhase === 'work' ? 'FIGHTING' : 'REST PHASE'}
-            </span>
+      {/* The one number worth a glance mid-set. */}
+      {workoutMode === 'practice' ? (
+        <Card className="flex items-end justify-between px-4 py-4">
+          {movement.dynamics ? (
+            <Stat value={dynamicStats?.reps ?? 0} unit="reps" />
+          ) : (
+            <Stat value={`${liveHoldTime}s`} unit="held" />
           )}
-        </div>
-
-        {!roundModeActive ? (
-          /* Timer Settings Configuration Panel */
-          <div className="flex flex-col gap-3.5">
-            <div className="grid grid-cols-3 gap-2.5">
-              {/* Rounds config */}
-              <div className="flex flex-col gap-1">
-                <label htmlFor="round-count-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Rounds</label>
-                <select
-                  id="round-count-select"
-                  value={roundCount}
-                  onChange={(e) => setRoundCount(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
-                >
-                  {[1, 2, 3, 4, 5].map((r) => (
-                    <option key={r} value={r}>{r} Rnd</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Work duration config */}
-              <div className="flex flex-col gap-1">
-                <label htmlFor="work-time-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Work Time</label>
-                <select
-                  id="work-time-select"
-                  value={roundDurationSec}
-                  onChange={(e) => setRoundDurationSec(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
-                >
-                  <option value={30}>30s</option>
-                  <option value={60}>1:00</option>
-                  <option value={90}>1:30</option>
-                  <option value={120}>2:00</option>
-                  <option value={180}>3:00</option>
-                </select>
-              </div>
-
-              {/* Rest duration config */}
-              <div className="flex flex-col gap-1">
-                <label htmlFor="rest-time-select" className="text-[9px] font-semibold text-zinc-500 uppercase cursor-pointer">Rest Time</label>
-                <select
-                  id="rest-time-select"
-                  value={restDurationSec}
-                  onChange={(e) => setRestDurationSec(Number(e.target.value))}
-                  className="rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-zinc-300 p-1.5 focus:border-zinc-700 outline-none cursor-pointer"
-                >
-                  <option value={15}>15s</option>
-                  <option value={30}>30s</option>
-                  <option value={45}>45s</option>
-                  <option value={60}>1:00</option>
-                </select>
-              </div>
+          <QuietButton onClick={onResetReps}>Reset</QuietButton>
+        </Card>
+      ) : (
+        <Card className="px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs text-zinc-500">Current combo</p>
+              <p className="truncate text-base font-semibold text-zinc-100">
+                {activeCombo?.name}
+              </p>
             </div>
-
-            <button
-              type="button"
-              onClick={onToggleRoundSession}
-              className="w-full rounded-xl bg-gradient-to-r from-red-600 to-red-700 py-2.5 text-xs font-bold text-white hover:from-red-500 hover:to-red-600 transition-all shadow-md flex items-center justify-center gap-1.5 active:scale-[0.98]"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-              </svg>
-              Start Muay Thai Session
-            </button>
+            <QuietButton onClick={() => startNextCombo()}>Skip</QuietButton>
           </div>
-        ) : (
-          /* Live Active Timer Display Panel */
-          <div className="flex items-center justify-between bg-zinc-950/40 border border-zinc-800/80 rounded-xl p-3.5 shadow-inner">
-            <div className="flex flex-col">
-              <span className="text-[9px] font-bold uppercase text-zinc-500 tracking-wider font-mono">
-                Round {currentRound} of {roundCount}
-              </span>
-              <span className="text-3xl font-black text-white tabular-nums font-mono mt-0.5">
-                {formatTime(roundTimeLeft)}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={onToggleRoundSession}
-              className="rounded-xl bg-red-600/10 border border-red-500/30 hover:bg-red-600/25 px-4.5 py-2.5 text-xs font-bold text-red-400 transition-all active:scale-[0.96]"
-            >
-              Stop Workout
-            </button>
-          </div>
-        )}
-      </div>
 
-      {/* --- COMBO COACH (PAD WORK) VIEW PANEL --- */}
+          <ol className="mt-3 flex flex-wrap gap-1.5">
+            {activeCombo?.sequence.map((strikeId, i) => {
+              const done = i < comboStepIndex;
+              const current = i === comboStepIndex;
+              return (
+                <li
+                  key={i}
+                  className={`rounded-lg px-2 py-1 text-xs font-medium ${
+                    done
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : current
+                        ? 'bg-red-600 text-white'
+                        : 'bg-zinc-800/60 text-zinc-500'
+                  }`}
+                >
+                  {strikeName(strikeId)}
+                </li>
+              );
+            })}
+          </ol>
+
+          <p className="mt-3 border-t border-zinc-800/70 pt-3 text-sm text-zinc-400">
+            <span className="font-semibold text-zinc-100">
+              {combosCompletedCount}
+            </span>{' '}
+            completed this session
+          </p>
+        </Card>
+      )}
+
+      {/* Rounds. Collapsed to a single button until you want the settings, and
+          replaced by the live clock once a session is running. */}
+      {roundModeActive ? (
+        <Card className="flex items-center justify-between px-4 py-3.5">
+          <div>
+            <p className="text-xs text-zinc-500">
+              Round {currentRound} of {roundCount} ·{' '}
+              {roundPhase === 'work' ? 'work' : 'rest'}
+            </p>
+            <p className="text-2xl font-bold tabular-nums text-white">
+              {formatTime(roundTimeLeft)}
+            </p>
+          </div>
+          <QuietButton onClick={onToggleRoundSession}>Stop</QuietButton>
+        </Card>
+      ) : (
+        <Section
+          title="Round timer"
+          meta={`${roundCount} × ${formatTime(roundDurationSec)}`}
+        >
+          <div className="grid grid-cols-3 gap-2">
+            <LabelledSelect label="Rounds" value={roundCount} onChange={setRoundCount}>
+              {[1, 2, 3, 4, 5].map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </LabelledSelect>
+            <LabelledSelect
+              label="Work"
+              value={roundDurationSec}
+              onChange={setRoundDurationSec}
+            >
+              {[30, 60, 90, 120, 180].map((s) => (
+                <option key={s} value={s}>
+                  {formatTime(s)}
+                </option>
+              ))}
+            </LabelledSelect>
+            <LabelledSelect
+              label="Rest"
+              value={restDurationSec}
+              onChange={setRestDurationSec}
+            >
+              {[15, 30, 45, 60].map((s) => (
+                <option key={s} value={s}>
+                  {formatTime(s)}
+                </option>
+              ))}
+            </LabelledSelect>
+          </div>
+          <PrimaryButton onClick={onToggleRoundSession} className="mt-3 w-full">
+            Start session
+          </PrimaryButton>
+        </Section>
+      )}
+
+      {/* Everything below is a drawer: available, not present. */}
+      {workoutMode === 'practice' && feedback && (
+        <Section title="Joint angles" meta={movement.name}>
+          {feedback.joints.map((j) => {
+            const spec = movement.joints.find((s) => s.id === j.id);
+            return (
+              <JointRow
+                key={j.id}
+                label={spec?.label ?? j.id}
+                angle={j.angle}
+                min={spec?.targetMin ?? 0}
+                max={spec?.targetMax ?? 180}
+                inRange={j.inRange}
+                available={j.available}
+              />
+            );
+          })}
+        </Section>
+      )}
+
       {workoutMode === 'combos' && (
-        <>
-          {/* Active Combo Progress */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg relative overflow-hidden">
-            <div className="absolute right-0 top-0 w-32 h-32 bg-amber-600/10 rounded-full filter blur-2xl pointer-events-none" />
-            
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500">Active Combo Target</span>
-            <h3 className="text-lg font-extrabold text-zinc-100 tracking-tight mt-1">
-              {COMBOS[activeComboIndex]?.name}
-            </h3>
-
-            {/* Strike list sequence */}
-            <div className="mt-4 flex flex-col gap-2">
-              {COMBOS[activeComboIndex]?.sequence.map((strikeId, i) => {
-                const isPassed = i < comboStepIndex;
-                const isCurrent = i === comboStepIndex;
-                return (
-                  <div
-                    key={i}
-                    className={`flex items-center justify-between rounded-xl p-3 border transition-all ${
-                      isPassed
-                        ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400'
-                        : isCurrent
-                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 font-bold scale-[1.01]'
-                          : 'bg-zinc-950/30 border-zinc-900/60 text-zinc-500'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="font-mono text-[10px] font-bold h-5 w-5 rounded-full border flex items-center justify-center border-current">
-                        {i + 1}
-                      </span>
-                      <span>{getStrikeName(strikeId)}</span>
-                    </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider">
-                      {isPassed ? '✓ HIT' : isCurrent ? 'PENDING' : 'LOCKED'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Callout Info */}
-            <div className="mt-4 border-t border-zinc-800/60 pt-3.5 flex justify-between items-center">
-              <div>
-                <span className="text-[10px] text-zinc-500 font-medium">Combos Hit</span>
-                <div className="text-2xl font-black text-white">{combosCompletedCount}</div>
-              </div>
+        <Section title="Choose a combo" meta={`${COMBOS.length}`}>
+          <div className="flex flex-col gap-1">
+            {COMBOS.map((combo, idx) => (
               <button
+                key={idx}
                 type="button"
-                onClick={() => startNextCombo()}
-                className="rounded-xl bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/30 px-4 py-2 text-xs font-bold text-amber-300 transition-all active:scale-[0.97]"
+                onClick={() => startNextCombo(idx)}
+                className={`rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                  idx === activeComboIndex
+                    ? 'bg-red-600/15 text-red-300'
+                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                }`}
               >
-                Skip Combo
+                {combo.name}
               </button>
-            </div>
+            ))}
           </div>
-
-          {/* Audio controls */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
-            <div className="grid grid-cols-2 gap-3 mt-3">
-              <label htmlFor="trainer-voice-combos" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                <span className="text-xs font-semibold text-zinc-300">Trainer Voice</span>
-                <input
-                  id="trainer-voice-combos"
-                  type="checkbox"
-                  checked={voiceEnabled}
-                  onChange={(e) => setVoiceEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
-                />
-              </label>
-
-              <label htmlFor="target-chimes-combos" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                <span className="text-xs font-semibold text-zinc-300">Target Chimes</span>
-                <input
-                  id="target-chimes-combos"
-                  type="checkbox"
-                  checked={soundEnabled}
-                  onChange={(e) => setSoundEnabled(e.target.checked)}
-                  className="rounded text-amber-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Pad Combos Selection Grid */}
-          <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Pad Training Schedule</span>
-            <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Available Combos</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {COMBOS.map((combo, idx) => {
-                const isActive = idx === activeComboIndex;
-                return (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => startNextCombo(idx)}
-                    className={`text-left rounded-xl p-3 border transition-all text-xs flex flex-col justify-between ${
-                      isActive
-                        ? 'bg-amber-600/10 border-amber-500/40 text-amber-300 shadow-md shadow-amber-500/5'
-                        : 'bg-zinc-950/30 border-zinc-900/60 text-zinc-400 hover:border-zinc-800 hover:bg-zinc-900/40 hover:text-zinc-200'
-                    }`}
-                  >
-                    <span className="font-extrabold">{combo.name}</span>
-                    <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wide truncate">
-                      {combo.sequence.join(' - ')}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </>
+        </Section>
       )}
 
-      {/* --- SINGLE PRACTICE MODE PANEL --- */}
-      {workoutMode === 'practice' && (
-        <>
-          {/* Stance Feedback Verdict */}
-          {feedback && (
-            <div
-              className={`rounded-2xl p-5 border transition-all duration-300 shadow-lg ${
-                feedback.ok
-                  ? 'bg-emerald-950/20 border-emerald-500/30 ring-1 ring-emerald-500/10'
-                  : 'bg-rose-950/20 border-rose-500/30 ring-1 ring-rose-500/10'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                {feedback.ok ? (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400">
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
+      {/* One set of audio toggles, not one per mode. */}
+      <Section
+        title="Sound"
+        meta={voiceEnabled || soundEnabled ? 'on' : 'off'}
+      >
+        <Toggle
+          label="Voice coach"
+          description="Speaks form corrections and round calls"
+          checked={voiceEnabled}
+          onChange={setVoiceEnabled}
+        />
+        <Toggle
+          label="Hit sounds"
+          description="Pad impact and bells"
+          checked={soundEnabled}
+          onChange={setSoundEnabled}
+        />
+      </Section>
+
+      <Section title="History" meta={history.length ? `${history.length}` : 'empty'}>
+        {history.length === 0 ? (
+          <p className="text-sm text-zinc-500">
+            Completed sets are logged here, on this device only.
+          </p>
+        ) : (
+          <>
+            <div className="flex max-h-56 flex-col divide-y divide-zinc-800/70 overflow-y-auto">
+              {history.map((log) => (
+                <div
+                  key={log.id}
+                  className="flex items-center justify-between py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-zinc-200">{log.movementName}</p>
+                    <p className="text-xs text-zinc-500">
+                      {new Date(log.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
                   </div>
-                ) : (
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/20 text-rose-400 animate-pulse">
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </div>
-                )}
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Practice Form</span>
-                  <h2 className={`text-xl font-extrabold tracking-tight ${feedback.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {feedback.ok ? `Good ${movement.name}` : 'Form Adjustment'}
-                  </h2>
+                  <span className="shrink-0 text-zinc-400">
+                    {log.reps !== undefined
+                      ? `${log.reps} reps`
+                      : log.holdTime !== undefined
+                        ? `${log.holdTime}s`
+                        : 'combo'}
+                  </span>
                 </div>
-              </div>
-
-              {!feedback.ok && cue && (
-                <div className="mt-3 flex items-start gap-2 rounded-xl bg-rose-500/10 p-3.5 border border-rose-500/20 text-sm font-semibold text-rose-200 animate-pulse">
-                  <svg className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>{cue}</span>
-                </div>
-              )}
+              ))}
             </div>
-          )}
-
-          {/* Practice stats & audio */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-32 h-32 bg-violet-600/10 rounded-full filter blur-2xl pointer-events-none" />
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Activity Stats</span>
-                {movement.dynamics ? (
-                  <div className="mt-2 flex items-baseline gap-4">
-                    <span className="text-5xl font-black text-white tracking-tight tabular-nums">
-                      {dynamicStats?.reps ?? 0}
-                    </span>
-                    <span className="text-zinc-400 text-sm font-medium">strikes thrown</span>
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-baseline gap-3">
-                    <span className="text-4xl font-black text-white tracking-tight tabular-nums">
-                      {liveHoldTime}s
-                    </span>
-                    <span className="text-zinc-400 text-sm font-medium">guard held</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 flex flex-col gap-1.5 border-t border-zinc-800/60 pt-3.5">
-                {movement.dynamics ? (
-                  <>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-zinc-400">Phase:</span>
-                      <span className="font-semibold text-zinc-200 uppercase tracking-wide">
-                        {dynamicStats?.phase ?? 'unknown'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-zinc-400">Top Speed:</span>
-                      <span className="font-semibold font-mono text-zinc-200">
-                        {dynamicStats?.peakVelocityDegPerSec ? `${Math.round(dynamicStats.peakVelocityDegPerSec)}°/s` : '0°/s'}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex justify-between text-xs">
-                    <span className="text-zinc-400">Guard Status:</span>
-                    <span className={`font-semibold ${feedback?.ok ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                      {feedback?.ok ? 'Active Guard' : 'Inactive'}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={onResetReps}
-                className="mt-4 w-full rounded-xl bg-zinc-800/80 border border-zinc-700/50 py-2.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all shadow-md active:scale-[0.98]"
-              >
-                Reset Reps
-              </button>
-            </div>
-
-            {/* Audio Assistant */}
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 flex flex-col justify-between shadow-lg relative overflow-hidden">
-              <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-600/10 rounded-full filter blur-2xl pointer-events-none" />
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Audio Assistant</span>
-                <h3 className="text-sm font-bold text-zinc-200 mt-1">Live Coaching Audio</h3>
-                <p className="text-zinc-400 text-xs mt-1">Setup voice and hit chiming tones during practice.</p>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-3">
-                <label htmlFor="trainer-voice-practice" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-zinc-300">Voice Coach</span>
-                    <span className="text-[10px] text-zinc-500">Speak form corrections</span>
-                  </div>
-                  <input
-                    id="trainer-voice-practice"
-                    type="checkbox"
-                    checked={voiceEnabled}
-                    onChange={(e) => setVoiceEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
-                  />
-                </label>
-
-                <label htmlFor="target-chimes-practice" className="flex items-center justify-between cursor-pointer rounded-xl bg-zinc-950/30 p-2.5 border border-zinc-800/50 hover:border-zinc-700/60 transition-all">
-                  <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-zinc-300">Hit Chimes</span>
-                    <span className="text-[10px] text-zinc-500">Sound on clean strikes</span>
-                  </div>
-                  <input
-                    id="target-chimes-practice"
-                    type="checkbox"
-                    checked={soundEnabled}
-                    onChange={(e) => setSoundEnabled(e.target.checked)}
-                    className="rounded text-emerald-500 bg-zinc-800 border-zinc-700 h-4 w-4 cursor-pointer"
-                  />
-                </label>
-              </div>
-            </div>
-          </div>
-
-          {/* Joint Analysis */}
-          {feedback && (
-            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Live Joint Analysis</span>
-              <h3 className="text-sm font-bold text-zinc-200 mt-1 mb-3">Form Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {feedback.joints.map((j) => {
-                  const spec = movement.joints.find((s) => s.id === j.id);
-                  return (
-                    <AngleProgressBar
-                      key={j.id}
-                      label={spec?.label ?? j.id}
-                      angle={j.angle}
-                      min={spec?.targetMin ?? 0}
-                      max={spec?.targetMax ?? 180}
-                      inRange={j.inRange}
-                      available={j.available}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* --- WORKOUT LOG HISTORY (SHARED) --- */}
-      <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/30 backdrop-blur-md p-5 shadow-lg flex flex-col gap-3">
-        <div className="flex justify-between items-center">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Session History</span>
-            <h3 className="text-sm font-bold text-zinc-200 mt-1">Completed Sets</h3>
-          </div>
-          {history.length > 0 && (
             <button
               type="button"
               onClick={onClearHistory}
-              className="text-xs font-semibold text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1"
+              className="mt-3 text-sm text-zinc-500 hover:text-zinc-300"
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              Clear Logs
+              Clear history
             </button>
-          )}
-        </div>
-
-        {history.length === 0 ? (
-          <div className="rounded-xl border border-zinc-800/40 bg-zinc-950/40 p-4 text-center text-xs text-zinc-500 font-medium">
-            No completed exercises in this session yet. Start training!
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1">
-            {history.map((log) => (
-              <div
-                key={log.id}
-                className="flex items-center justify-between rounded-xl bg-zinc-950/30 border border-zinc-900/60 p-3 hover:bg-zinc-950/50 hover:border-zinc-800/80 transition-all"
-              >
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-200">{log.movementName}</span>
-                  <span className="text-[10px] text-zinc-500 font-mono">
-                    {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <div className="text-right">
-                  {log.movementId === 'muaythai-combo' ? (
-                    <span className="text-xs font-extrabold text-amber-400">Combo Done ✓</span>
-                  ) : log.reps !== undefined ? (
-                    <div className="flex flex-col items-end">
-                      <span className="text-xs font-extrabold text-emerald-400">{log.reps} Strikes</span>
-                      {log.peakSpeed !== undefined && log.peakSpeed > 0 && (
-                        <span className="text-[10px] text-zinc-500 font-mono">Top: {Math.round(log.peakSpeed)}°/s</span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-xs font-extrabold text-violet-400">{log.holdTime}s Held</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          </>
         )}
-      </div>
+      </Section>
     </div>
   );
 }
