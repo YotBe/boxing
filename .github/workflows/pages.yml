@@ -5,9 +5,17 @@ name: Deploy to GitHub Pages
 # derived from import.meta.env.BASE_URL, and the service worker derives its own
 # from its registration scope, so nothing needs to be told where it lives.
 
+# Manual only, deliberately.
+#
+# `actions/configure-pages` fails unless Pages is already enabled on the repo
+# with "GitHub Actions" as the source, and that is a repository setting a
+# workflow cannot turn on for itself. Running this on every push therefore
+# painted a red X on main for a prerequisite nobody had asked for — the deploy
+# that actually serves this app is Vercel, and Pages is only a fallback.
+#
+# To use it: Settings → Pages → Source: GitHub Actions, then run this workflow
+# from the Actions tab on whichever branch you want published.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
