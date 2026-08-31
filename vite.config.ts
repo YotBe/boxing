@@ -53,5 +53,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // The e2e suites drive a real browser and are run deliberately via
+    // `npm run e2e`, never as unit tests. Vitest's default include glob would
+    // otherwise try to collect anything named *.spec.* in here.
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
   },
 });

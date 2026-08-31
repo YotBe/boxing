@@ -13,3 +13,6 @@ pnpm-debug.log*
 .vite
 .codex
 .claude
+
+# e2e fixtures and scratch builds
+node_modules/.cache
